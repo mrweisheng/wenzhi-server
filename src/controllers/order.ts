@@ -65,8 +65,8 @@ export const getOrders = async (req: Request, res: Response) => {
       },
       message: "获取成功"
     })
-  } catch (error) {
-    console.error('Get orders error:', error)
+  } catch (err: any) {
+    console.error('Get orders error:', err)
     res.status(500).json({
       code: 1,
       message: '服务器错误'

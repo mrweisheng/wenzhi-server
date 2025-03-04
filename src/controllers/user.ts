@@ -38,8 +38,8 @@ export const getUsers = async (req: Request, res: Response) => {
       code: 0,
       data: users
     })
-  } catch (error) {
-    console.error('Get users error:', error)
+  } catch (err: any) {
+    console.error('Get users error:', err)
     res.status(500).json({
       code: 1,
       message: '服务器错误'

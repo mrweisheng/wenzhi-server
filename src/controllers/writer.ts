@@ -181,12 +181,12 @@ export const createWriter = async (req: Request, res: Response) => {
       },
       message: '添加成功'
     })
-  } catch (error) {
-    console.error('Create writer error:', error)
-    if (error.message === '当日写手ID序号已用尽') {
+  } catch (err: any) {
+    console.error('Create writer error:', err)
+    if (err.message === '当日写手ID序号已用尽') {
       return res.status(400).json({
         code: 1,
-        message: error.message
+        message: err.message
       })
     }
     res.status(500).json({

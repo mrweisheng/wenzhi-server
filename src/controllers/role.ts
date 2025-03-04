@@ -12,8 +12,8 @@ export const getRoles = async (req: Request, res: Response) => {
       code: 0,
       data: roles
     })
-  } catch (error) {
-    console.error('Get roles error:', error)
+  } catch (err: any) {
+    console.error('Get roles error:', err)
     res.status(500).json({
       code: 1,
       message: '服务器错误'

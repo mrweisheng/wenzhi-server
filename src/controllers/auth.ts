@@ -76,8 +76,8 @@ export const login = async (req: Request, res: Response) => {
         }
       }
     })
-  } catch (error) {
-    console.error('Login error:', error)
+  } catch (err: any) {
+    console.error('Login error:', err)
     res.status(500).json({
       code: 1,
       message: '服务器错误'

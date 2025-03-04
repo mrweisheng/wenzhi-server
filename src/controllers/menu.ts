@@ -12,8 +12,8 @@ export const getAllMenus = async (req: Request, res: Response) => {
       code: 0,
       data: menus
     })
-  } catch (error) {
-    console.error('Get menus error:', error)
+  } catch (err: any) {
+    console.error('Get menus error:', err)
     res.status(500).json({
       code: 1,
       message: '服务器错误'
