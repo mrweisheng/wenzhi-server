@@ -85,7 +85,7 @@ const createQueryWrapper = () => {
 }
 
 // 监听连接池错误
-pool.on('error', async (err: any) => {
+pool.on('error' as any, async (err: any) => {
   console.error('数据库连接池错误:', err)
   if (err.code === 'PROTOCOL_CONNECTION_LOST') {
     console.log('正在尝试重新连接数据库...')
