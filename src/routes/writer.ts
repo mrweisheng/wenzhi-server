@@ -6,13 +6,24 @@ import {
   createWriter,
   updateWriter,
   deleteWriter,
-  batchDeleteWriters
+  batchDeleteWriters,
+  getWriterList
 } from '../controllers/writer'
+import {
+  rateWriter,
+  getWriterRatings,
+  getWriterTodayRating,
+  getWriterRatingByDate
+} from '../controllers/writerRating'
+import { checkRatingPermission } from '../middlewares/role'
 
 const router = express.Router()
 
 // 获取写手列表
 router.get('/', auth, getWriters)
+
+// 获取写手简要列表
+router.get('/list', auth, getWriterList)
 
 // 获取写手详情
 router.get('/:id', auth, getWriterById)
@@ -28,5 +39,11 @@ router.delete('/:id', auth, deleteWriter)
 
 // 批量删除写手
 router.delete('/', auth, batchDeleteWriters)
+
+// 写手评分相关路由
+router.post('/:writerId/ratings', auth, checkRatingPermission, rateWriter)
+router.get('/:writerId/ratings', auth, getWriterRatings)
+router.get('/:writerId/today-rating', auth, getWriterTodayRating)
+router.get('/:writerId/rating-by-date', auth, getWriterRatingByDate)
 
 export default router 

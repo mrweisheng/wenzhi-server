@@ -17,35 +17,41 @@ export const getWriters = async (req: Request, res: Response) => {
     } = req.query
 
     // 构建查询条件
-    let sql = 'SELECT * FROM writer_info WHERE 1=1'
+    let sql = `
+      SELECT w.*, 
+             CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END as is_activated
+      FROM writer_info w
+      LEFT JOIN users u ON w.writer_id = u.username
+      WHERE 1=1
+    `
     const params: any[] = []
 
     if (writer_id) {
-      sql += ' AND writer_id = ?'
+      sql += ' AND w.writer_id = ?'
       params.push(writer_id)
     }
     if (name) {
-      sql += ' AND name LIKE ?'
+      sql += ' AND w.name LIKE ?'
       params.push(`%${name}%`)
     }
     if (education) {
-      sql += ' AND education = ?'
+      sql += ' AND w.education = ?'
       params.push(education)
     }
     if (major) {
-      sql += ' AND major LIKE ?'
+      sql += ' AND w.major LIKE ?'
       params.push(`%${major}%`)
     }
     if (writing_experience) {
-      sql += ' AND writing_experience = ?'
+      sql += ' AND w.writing_experience = ?'
       params.push(writing_experience)
     }
     if (starred !== undefined) {
-      sql += ' AND starred = ?'
+      sql += ' AND w.starred = ?'
       params.push(starred)
     }
     if (processed !== undefined) {
-      sql += ' AND processed = ?'
+      sql += ' AND w.processed = ?'
       params.push(processed)
     }
 
@@ -57,7 +63,7 @@ export const getWriters = async (req: Request, res: Response) => {
     const total = countResult[0].total
 
     // 分页查询
-    sql += ' ORDER BY created_time DESC LIMIT ? OFFSET ?'
+    sql += ' ORDER BY w.created_time DESC LIMIT ? OFFSET ?'
     params.push(Number(pageSize), (Number(page) - 1) * Number(pageSize))
 
     const [rows] = await pool.query(sql, params)
@@ -84,8 +90,13 @@ export const getWriterById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params
 
+    // 获取写手基本信息
     const [writers]: any = await pool.query(
-      'SELECT * FROM writer_info WHERE id = ?',
+      `SELECT w.*, 
+              CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END as is_activated
+       FROM writer_info w
+       LEFT JOIN users u ON w.writer_id = u.username
+       WHERE w.id = ?`,
       [id]
     )
 
@@ -96,9 +107,44 @@ export const getWriterById = async (req: Request, res: Response) => {
       })
     }
 
+    // 查询最新的评分记录
+    const [latestRatings]: any = await pool.query(
+      `SELECT r.*, 
+              u.username as inspector_username,
+              u.real_name as inspector_name
+       FROM writer_ratings r
+       INNER JOIN users u ON r.quality_inspector_id = u.id
+       WHERE r.writer_id = ?
+       ORDER BY r.rating_date DESC, r.updated_at DESC
+       LIMIT 1`,
+      [id]
+    )
+
+    // 格式化写手数据
+    const writerData = writers[0]
+    
+    // 如果有评分记录，添加到返回数据中
+    if (latestRatings.length > 0) {
+      const rating = latestRatings[0]
+      writerData.latest_rating = {
+        id: rating.id,
+        score: rating.score,
+        comment: rating.comment,
+        date: rating.rating_date,
+        created_at: rating.created_at,
+        updated_at: rating.updated_at,
+        quality_inspector: {
+          id: rating.quality_inspector_id,
+          name: rating.inspector_name || rating.inspector_username
+        }
+      }
+    } else {
+      writerData.latest_rating = null
+    }
+
     res.json({
       code: 0,
-      data: writers[0],
+      data: writerData,
       message: '获取成功'
     })
   } catch (error) {
@@ -275,6 +321,31 @@ export const batchDeleteWriters = async (req: Request, res: Response) => {
     })
   } catch (error) {
     console.error('Batch delete writers error:', error)
+    res.status(500).json({
+      code: 1,
+      message: '服务器错误'
+    })
+  }
+}
+
+// 获取写手简要列表
+export const getWriterList = async (req: Request, res: Response) => {
+  try {
+    const [writers] = await pool.query(
+      `SELECT w.id, w.writer_id, w.name, w.phone_1,
+              CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END as is_activated
+       FROM writer_info w
+       LEFT JOIN users u ON w.writer_id = u.username
+       ORDER BY w.created_time DESC`
+    )
+
+    res.json({
+      code: 0,
+      message: 'success',
+      data: writers
+    })
+  } catch (err: any) {
+    console.error('Get writer list error:', err)
     res.status(500).json({
       code: 1,
       message: '服务器错误'

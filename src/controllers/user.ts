@@ -177,4 +177,162 @@ export const updateUserStatus = async (req: Request, res: Response) => {
       message: '服务器错误'
     })
   }
+}
+
+// 获取客服列表
+export const getCustomerService = async (req: Request, res: Response) => {
+  try {
+    // 假设客服角色的role_name包含"客服"关键字
+    const [users] = await pool.query(
+      `SELECT u.id, u.username, u.real_name 
+       FROM users u 
+       INNER JOIN roles r ON u.role_id = r.id 
+       WHERE r.role_name LIKE '%客服%' AND u.status = 1
+       ORDER BY u.id`
+    )
+
+    res.json({
+      code: 0,
+      message: 'success',
+      data: users
+    })
+  } catch (err: any) {
+    console.error('Get customer service error:', err)
+    res.status(500).json({
+      code: 1,
+      message: '服务器错误'
+    })
+  }
+}
+
+// 获取用户列表（用于选择问题负责人）
+export const getUserList = async (req: Request, res: Response) => {
+  try {
+    // 获取所有活跃用户
+    const [users]: any = await pool.query(
+      `SELECT u.id, u.username, u.real_name 
+       FROM users u 
+       WHERE u.status = 1
+       ORDER BY u.id`
+    )
+
+    // 格式化返回数据
+    const formattedUsers = (users as any[]).map((user: any) => ({
+      id: user.id.toString(),
+      name: user.real_name || user.username
+    }))
+
+    res.json({
+      code: 0,
+      message: 'success',
+      data: formattedUsers
+    })
+  } catch (err: any) {
+    console.error('Get user list error:', err)
+    res.status(500).json({
+      code: 1,
+      message: '获取用户列表失败'
+    })
+  }
+}
+
+// 更新用户邮箱
+export const updateEmail = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId // 获取当前登录用户ID
+    const { email } = req.body
+
+    // 验证邮箱格式
+    if (!email || !/^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[a-zA-Z]{2,7}$/.test(email)) {
+      return res.status(400).json({
+        code: 1,
+        message: '邮箱格式不正确'
+      })
+    }
+
+    // 更新邮箱
+    await pool.query(
+      'UPDATE users SET email = ? WHERE id = ?',
+      [email, userId]
+    )
+
+    res.json({
+      code: 0,
+      message: '邮箱更新成功'
+    })
+  } catch (error) {
+    console.error('Update email error:', error)
+    res.status(500).json({
+      code: 1,
+      message: '服务器错误'
+    })
+  }
+}
+
+// 修改密码
+export const updatePassword = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId // 获取当前登录用户ID
+    const { oldPassword, newPassword } = req.body
+
+    // 验证参数
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({
+        code: 1,
+        message: '旧密码和新密码不能为空'
+      })
+    }
+    
+    // 验证新密码强度
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        code: 1,
+        message: '新密码长度不能少于6个字符'
+      })
+    }
+
+    // 获取用户当前密码
+    const [users]: any = await pool.query(
+      'SELECT password FROM users WHERE id = ?',
+      [userId]
+    )
+
+    if (users.length === 0) {
+      return res.status(404).json({
+        code: 1,
+        message: '用户不存在'
+      })
+    }
+
+    const user = users[0]
+    
+    // 验证旧密码
+    const isMatch = await bcrypt.compare(oldPassword, user.password)
+    if (!isMatch) {
+      return res.status(400).json({
+        code: 1,
+        message: '旧密码不正确'
+      })
+    }
+
+    // 加密新密码
+    const hashedPassword = await bcrypt.hash(newPassword, 10)
+
+    // 更新密码
+    await pool.query(
+      'UPDATE users SET password = ? WHERE id = ?',
+      [hashedPassword, userId]
+    )
+
+    res.json({
+      code: 0,
+      message: '密码修改成功'
+    })
+  } catch (error) {
+    console.error('Update password error:', error)
+    res.status(500).json({
+      code: 1,
+      message: '服务器错误'
+    })
+  }
 } 

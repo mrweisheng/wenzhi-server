@@ -22,6 +22,8 @@ POST /api/auth/login
         real_name: 真实姓名,
         email: 邮箱,
         status: 状态,
+        created_at: 创建时间,
+        updated_at: 更新时间,
         role: {
           id: 角色ID,
           role_name: 角色名称
@@ -51,6 +53,8 @@ GET /api/auth/userInfo
       real_name: 真实姓名,
       email: 邮箱,
       status: 状态,
+      created_at: 创建时间,
+      updated_at: 更新时间,
       role: {
         id: 角色ID,
         role_name: 角色名称
@@ -161,6 +165,71 @@ PUT /api/users/:id/status
     message: "状态更新成功"
   }
 
+### 6. 获取客服列表
+GET /api/users/customer-service
+描述: 获取所有客服角色的用户列表
+请求头:
+  - Authorization: Bearer <token>
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: [
+      {
+        id: 客服用户ID,
+        username: 客服用户名,
+        real_name: 真实姓名
+      }
+    ]
+  }
+
+### 7. 修改当前用户邮箱
+PUT /api/users/email
+描述: 更新当前登录用户的邮箱
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - email: 新邮箱地址(必填)
+响应:
+  {
+    code: 0,
+    message: "邮箱更新成功"
+  }
+错误响应:
+  {
+    code: 1,
+    message: "邮箱格式不正确"
+  }
+
+### 8. 修改当前用户密码
+PUT /api/users/password
+描述: 更新当前登录用户的密码
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - oldPassword: 旧密码(必填)
+  - newPassword: 新密码(必填)
+响应:
+  {
+    code: 0,
+    message: "密码修改成功"
+  }
+错误响应:
+  {
+    code: 1,
+    message: "旧密码不正确"
+  }
+或
+  {
+    code: 1,
+    message: "旧密码和新密码不能为空"
+  }
+或
+  {
+    code: 1,
+    message: "新密码长度不能少于6个字符"
+  }
+
 ## 三、角色管理模块
 
 ### 1. 获取角色列表
@@ -256,6 +325,82 @@ GET /api/roles/:id/menus
     ]
   }
 
+## 四、菜单管理模块
+
+### 1. 获取菜单列表
+GET /api/menus
+描述: 获取所有菜单列表
+请求头:
+  - Authorization: Bearer <token>
+响应:
+  {
+    code: 0,
+    data: [
+      {
+        id: 菜单ID,
+        name: 菜单名称,
+        path: 路由路径,
+        icon: 图标,
+        sort: 排序号,
+        parent_id: 父菜单ID,
+        created_time: 创建时间
+      }
+    ]
+  }
+
+### 2. 创建菜单
+POST /api/menus
+描述: 创建新菜单
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - name: 菜单名称(必填)
+  - path: 路由路径(必填)
+  - icon: 图标(可选)
+  - sort: 排序号(可选)
+  - parent_id: 父菜单ID(可选)
+响应:
+  {
+    code: 0,
+    message: "创建成功"
+  }
+
+### 3. 更新菜单
+PUT /api/menus/:id
+描述: 更新菜单信息
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - name: 菜单名称(可选)
+  - icon: 图标(可选)
+  - sort: 排序号(可选)
+响应:
+  {
+    code: 0,
+    message: "更新成功"
+  }
+错误响应:
+  {
+    code: 1,
+    message: "菜单不存在"
+  }
+或
+  {
+    code: 1,
+    message: "没有要更新的字段"
+  }
+
+### 4. 删除菜单
+DELETE /api/menus/:id
+描述: 删除菜单
+请求头:
+  - Authorization: Bearer <token>
+响应:
+  {
+    code: 0,
+    message: "删除成功"
+  }
+
 ## 五、写手管理模块
 
 ### 1. 获取写手列表
@@ -295,6 +440,7 @@ GET /api/writers
           ip_address: IP地址,
           starred: 是否星标,
           processed: 是否已处理,
+          is_activated: 是否已开通账号(1-已开通,0-未开通),
           created_time: 创建时间,
           created_by: 创建人,
           last_modified_time: 最后修改时间,
@@ -315,6 +461,20 @@ GET /api/writers/:id
     code: 0,
     data: {
       // 写手详细信息,字段同列表接口
+      // 包括is_activated字段表示是否已开通账号(1-已开通,0-未开通)
+      // 新增最新评分信息
+      latest_rating: {
+        id: 评分记录ID,
+        score: 8.5,             // 评分分数
+        comment: "评价内容",     // 评价内容
+        date: "2024-03-30",     // 评分日期
+        created_at: "2024-03-30 10:30:00",  // 创建时间
+        updated_at: "2024-03-30 10:30:00",  // 更新时间
+        quality_inspector: {
+          id: 质检员ID,
+          name: "质检员姓名"
+        }
+      }  // 如果没有评分记录，该字段为null
     },
     message: "获取成功"
   }
@@ -413,6 +573,26 @@ DELETE /api/writers
     message: "删除成功"
   }
 
+### 7. 获取写手简要列表
+GET /api/writers/list
+描述: 获取所有写手列表（用于下拉选择）
+请求头:
+  - Authorization: Bearer <token>
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: [
+      {
+        id: 写手ID,
+        writer_id: 写手编号,
+        name: 写手姓名,
+        phone_1: 手机号码,  // 可选，用于显示额外信息
+        is_activated: 是否已开通账号(1-已开通,0-未开通)
+      }
+    ]
+  }
+
 ## 六、订单管理模块
 
 ### 1. 获取订单列表
@@ -455,6 +635,42 @@ GET /api/orders
     message: "获取成功"
   }
 
+### 2. 更新订单客服
+PUT /api/orders/:orderId/customer
+描述: 为指定订单分配或更换客服
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - customer_id: 客服用户ID(必填)
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: {
+      order_id: 订单编号,
+      customer_id: 客服用户ID,
+      customer: 客服用户名
+    }
+  }
+
+### 3. 更新订单写手
+PUT /api/orders/:orderId/writer
+描述: 为指定订单分配或更换写手
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - writer_id: 写手ID(必填)
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: {
+      order_id: 订单编号,
+      writer_id: 写手ID,
+      writer: 写手姓名
+    }
+  }
+
 ## 七、统计模块
 
 ### 1. 获取系统统计数据
@@ -470,7 +686,531 @@ GET /api/statistics
       menuCount: 菜单总数,
       roleCount: 角色总数,
       writerCount: 写手总数,
-      orderCount: 订单总数
+      orderCount: 订单总数,
+      sevenDaysAmount: [  // 最近7天每日订单金额统计
+        {
+          date: "2024-03-10",  // 日期，格式：YYYY-MM-DD
+          amount: 1000.00      // 当日订单金额总和
+        }
+        // ... 共7天的数据
+      ],
+      channelOrders: {  // 各渠道订单数统计
+        "支付宝": 100,   // 支付宝渠道订单数
+        "企业微信": 50    // 企业微信渠道订单数
+        // 可能包含其他渠道
+      }
     },
     message: "获取成功"
+  }
+说明：
+1. sevenDaysAmount 数组包含最近7天的每日订单金额统计
+2. 统计的起止时间：以最后一笔订单的创建时间为截止时间，向前推7天
+3. amount 为当天所有订单的买家实付金额(amount字段)总和
+4. 数据按日期升序排序
+5. channelOrders 对象包含各支付渠道的订单总数统计
+
+## 八、客服订单管理模块
+
+### 1. 创建客服订单
+POST /api/customer-orders
+描述: 客服填报新订单
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - order_id: 订单编号(必填)
+  - date: 日期(必填，格式：YYYY-MM-DD)
+  - is_fixed: 是否定稿(必填，0-未定稿，1-已定稿)
+  - order_content: 稿件内容信息(可选)
+  - word_count: 稿件字数(可选)
+  - fee: 稿费(可选)
+  - customer_id: 客服ID(可选，默认为当前登录用户)
+  - writer_id: 写手ID(必填)
+  - exchange_time: 交稿时间(可选)
+  - payment_channel: 付款渠道(可选)
+  - store_name: 店铺名或客户线下(可选)
+  - new_customer: 是否新客户(可选，0-否，1-是)
+  - customer_name: 订单客户的名称(可选，不是客服名称)
+  - order_amount: 订单下单金额(可选)
+  - refund_amount: 退款金额(可选)
+  - special_situation: 特殊情况(不结算)(可选)
+响应:
+  {
+    code: 0,
+    message: "创建成功",
+    data: {
+      id: 订单ID,
+      order_id: 订单编号
+    }
+  }
+错误响应:
+  {
+    code: 1,
+    message: "订单号已存在"
+  }
+  或
+  {
+    code: 1,
+    message: "您没有权限执行此操作"
+  }
+
+### 2. 获取客服订单列表
+GET /api/customer-orders
+描述: 获取客服订单列表，支持分页和条件查询
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - page: 页码(默认1)
+  - pageSize: 每页条数(默认10)
+  - order_id: 订单编号(可选，精确匹配)
+  - date_start: 开始日期(可选，格式：YYYY-MM-DD)
+  - date_end: 结束日期(可选，格式：YYYY-MM-DD)
+  - customer_id: 客服ID(可选)
+  - writer_id: 写手ID(可选)
+  - is_fixed: 是否定稿(可选，0-未定稿，1-已定稿)
+响应:
+  {
+    code: 0,
+    data: {
+      total: 总条数,
+      list: [
+        {
+          id: 订单ID,
+          order_id: 订单编号,
+          date: 日期,
+          is_fixed: 是否定稿,
+          order_content: 稿件内容信息,
+          word_count: 稿件字数,
+          fee: 稿费,
+          customer_id: 客服ID,
+          customer_service_name: 客服用户名,
+          writer_id: 写手ID,
+          writer_name: 写手姓名,
+          exchange_time: 交稿时间,
+          payment_channel: 付款渠道,
+          store_name: 店铺名或客户线下,
+          new_customer: 是否新客户,
+          customer_name: 客户名称,
+          order_amount: 订单下单金额,
+          refund_amount: 退款金额,
+          special_situation: 特殊情况(不结算),
+          created_at: 记录创建时间,
+          updated_at: 记录更新时间
+        }
+      ]
+    },
+    message: "获取成功"
+  }
+
+### 3. 获取客服订单详情
+GET /api/customer-orders/:id
+描述: 获取客服订单详情
+请求头:
+  - Authorization: Bearer <token>
+响应:
+  {
+    code: 0,
+    data: {
+      // 订单详细信息，字段同列表接口
+    },
+    message: "获取成功"
+  }
+错误响应:
+  {
+    code: 1,
+    message: "订单不存在"
+  }
+
+### 4. 更新客服订单
+PUT /api/customer-orders/:id
+描述: 更新客服订单信息
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  // 同创建接口，所有字段均为可选
+响应:
+  {
+    code: 0,
+    message: "更新成功"
+  }
+错误响应:
+  {
+    code: 1,
+    message: "订单不存在"
+  }
+  或
+  {
+    code: 1,
+    message: "您没有权限执行此操作"
+  }
+
+### 5. 删除客服订单
+DELETE /api/customer-orders/:id
+描述: 删除客服订单
+请求头:
+  - Authorization: Bearer <token>
+响应:
+  {
+    code: 0,
+    message: "删除成功"
+  }
+错误响应:
+  {
+    code: 1,
+    message: "订单不存在"
+  }
+  或
+  {
+    code: 1,
+    message: "您没有权限执行此操作"
+  }
+
+## 九、写手评分管理模块
+
+### 1. 添加/更新写手评分
+POST /api/writers/:writerId/ratings
+描述: 为指定写手添加今日评分(每日仅能添加一次,若已存在则更新)
+权限: 质检、主管及超级管理员角色可操作
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - score: 评分(必填，1-10分，支持小数点后一位)
+  - comment: 评价内容(必填)
+响应:
+  {
+    code: 0,
+    message: "评分保存成功" 或 "评分更新成功",
+    data: {
+      id: 评分记录ID
+    }
+  }
+错误响应:
+  {
+    code: 1,
+    message: "写手不存在"
+  }
+或
+  {
+    code: 1,
+    message: "评分必须在1到10之间"
+  }
+或
+  {
+    code: 1,
+    message: "评价内容不能为空"
+  }
+或
+  {
+    code: 1,
+    message: "没有权限执行此操作，仅限质检人员、主管及超级管理员"
+  }
+
+### 2. 获取写手评分历史
+GET /api/writers/:writerId/ratings
+描述: 获取指定写手的评分历史
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - start_date: 开始日期(可选，格式：YYYY-MM-DD)
+  - end_date: 结束日期(可选，格式：YYYY-MM-DD)
+  - page: 页码(默认1)
+  - pageSize: 每页条数(默认10)
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: {
+      writer: {
+        id: 写手ID,
+        writer_id: "写手编号",
+        name: "写手姓名"
+      },
+      total: 总条数,
+      list: [
+        {
+          id: 记录ID,
+          score: 8.5,
+          comment: "工作认真，质量高",
+          date: "2024-03-30",
+          created_at: "2024-03-30 10:30:00",
+          updated_at: "2024-03-30 10:30:00",
+          quality_inspector: {
+            id: 质检员ID,
+            name: "质检员姓名"
+          }
+        }
+      ]
+    }
+  }
+
+### 3. 获取指定写手当天评分记录
+GET /api/writers/:writerId/today-rating
+描述: 获取指定写手当天的评分记录(如果存在)
+请求头:
+  - Authorization: Bearer <token>
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: {
+      id: 记录ID,
+      score: 8.5,
+      comment: "工作认真，质量高",
+      date: "2024-03-30",
+      created_at: "2024-03-30 10:30:00",
+      updated_at: "2024-03-30 10:30:00",
+      writer: {
+        id: 写手ID,
+        writer_id: "写手编号",
+        name: "写手姓名"
+      },
+      quality_inspector: {
+        id: 质检员ID,
+        name: "质检员姓名"
+      }
+    }
+  }
+或:
+  {
+    code: 0,
+    message: "success",
+    data: null  // 表示今天尚未评分
+  }
+错误响应:
+  {
+    code: 1,
+    message: "写手不存在"
+  }
+
+### 4. 获取指定写手特定日期评分记录
+GET /api/writers/:writerId/rating-by-date
+描述: 获取指定写手特定日期的评分记录(如果存在)
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - date: 日期(可选，默认今天，格式：YYYY-MM-DD)
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: {
+      id: 记录ID,
+      score: 8.5,
+      comment: "工作认真，质量高",
+      date: "2024-03-30",
+      created_at: "2024-03-30 10:30:00",
+      updated_at: "2024-03-30 10:30:00",
+      writer: {
+        id: 写手ID,
+        writer_id: "写手编号",
+        name: "写手姓名"
+      },
+      quality_inspector: {
+        id: 质检员ID,
+        name: "质检员姓名"
+      }
+    }
+  }
+或:
+  {
+    code: 0,
+    message: "success",
+    data: null  // 表示指定日期尚未评分
+  }
+错误响应:
+  {
+    code: 1,
+    message: "写手不存在"
+  }
+
+### 5. 获取某日所有写手评分
+GET /api/writer-ratings/daily
+描述: 获取某一天所有写手的评分情况
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - date: 日期(可选，默认今天，格式：YYYY-MM-DD)
+  - page: 页码(默认1)
+  - pageSize: 每页条数(默认10)
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: {
+      date: "2024-03-30",
+      total: 总条数,
+      list: [
+        {
+          id: 记录ID,
+          writer: {
+            id: 写手ID,
+            writer_id: "写手编号",
+            name: "写手姓名"
+          },
+          score: 8.5,
+          comment: "工作认真，质量高",
+          created_at: "2024-03-30 10:30:00",
+          quality_inspector: {
+            id: 质检员ID,
+            name: "质检员姓名"
+          }
+        }
+      ]
+    }
+  }
+
+### 6. 获取未评分的写手列表
+GET /api/writer-ratings/unrated
+描述: 获取今日尚未评分的写手列表
+权限: 质检、主管及超级管理员角色可访问
+请求头:
+  - Authorization: Bearer <token>
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: [
+      {
+        id: 写手ID,
+        writer_id: "写手编号",
+        name: "写手姓名"
+      }
+    ]
+  }
+
+## 十、案例管理模块
+
+### 1. 获取案例列表
+GET /api/cases
+描述: 获取案例列表，支持分页和按类型筛选
+权限: 超级管理员、主管、客服及质检人员可访问
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - page: 页码(默认1)
+  - pageSize: 每页条数(默认10)
+  - case_type: 案例类型(可选,筛选特定类型案例)
+响应:
+  {
+    code: 0,
+    data: {
+      total: 总条数,
+      list: [
+        {
+          id: "CASE-001",
+          case_type: "聊天话术",
+          title: "产品推荐话术",
+          content: "案例内容正文...",
+          images: [  // 图片URL数组
+            "http://118.31.76.202:3000/upload/202403/1712345678_1234.jpg",
+            "http://118.31.76.202:3000/upload/202403/1712345679_5678.jpg"
+          ],
+          created_at: "2024-03-30 10:30:00",
+          updated_at: "2024-03-30 10:30:00",
+          creator: {
+            id: 创建人ID,
+            name: "创建人姓名"
+          }
+        }
+      ]
+    },
+    message: "获取成功"
+  }
+
+### 2. 获取案例详情
+GET /api/cases/:id
+描述: 获取案例详情
+权限: 超级管理员、主管、客服及质检人员可访问
+请求头:
+  - Authorization: Bearer <token>
+路径参数:
+  - id: 案例ID
+响应:
+  {
+    code: 0,
+    data: {
+      id: "CASE-001",
+      case_type: "聊天话术",
+      title: "产品推荐话术",
+      content: "案例内容正文...",
+      images: [  // 图片URL数组
+        "http://118.31.76.202:3000/upload/202403/1712345678_1234.jpg",
+        "http://118.31.76.202:3000/upload/202403/1712345679_5678.jpg"
+      ],
+      created_at: "2024-03-30 10:30:00",
+      updated_at: "2024-03-30 10:30:00",
+      creator: {
+        id: 创建人ID,
+        name: "创建人姓名"
+      }
+    },
+    message: "获取成功"
+  }
+错误响应:
+  {
+    code: 1,
+    message: "案例不存在"
+  }
+
+### 3. 创建案例
+POST /api/cases
+描述: 上传新案例，支持多张图片上传
+权限: 超级管理员、主管、客服及质检人员可访问
+请求头:
+  - Authorization: Bearer <token>
+  - Content-Type: multipart/form-data
+请求参数:
+  - case_type: 案例类型(必填)
+  - title: 案例标题(必填)
+  - content: 案例内容(必填)
+  - images: 图片文件(可选,最多10张,每张不超过2MB)
+响应:
+  {
+    code: 0,
+    data: {
+      id: "CASE-001",
+      images: [
+        "http://118.31.76.202:3000/upload/202403/1712345678_1234.jpg",
+        "http://118.31.76.202:3000/upload/202403/1712345679_5678.jpg"
+      ]
+    },
+    message: "创建成功"
+  }
+错误响应:
+  {
+    code: 1,
+    message: "案例类型、标题和内容不能为空"
+  }
+或
+  {
+    code: 1,
+    message: "图片上传失败: 只能上传图片文件!"
+  }
+或
+  {
+    code: 1,
+    message: "图片上传失败: 单张图片不能超过2MB"
+  }
+
+### 4. 删除案例
+DELETE /api/cases/:id
+描述: 删除案例及其关联的图片文件
+权限: 超级管理员、主管、客服及质检人员可访问
+请求头:
+  - Authorization: Bearer <token>
+路径参数:
+  - id: 案例ID
+响应:
+  {
+    code: 0,
+    message: "删除成功"
+  }
+错误响应:
+  {
+    code: 1,
+    message: "案例不存在"
+  }
+或
+  {
+    code: 1,
+    message: "没有权限执行此操作，仅限超级管理员、主管、客服及质检人员"
   }

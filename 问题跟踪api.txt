@@ -1,0 +1,230 @@
+# 问题跟踪系统API文档
+
+## 一、问题管理API
+
+### 1. 获取问题列表
+GET /api/issues
+描述: 获取问题列表,支持条件查询
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - keyword: 关键词(可选,搜索标题)
+  - status: 状态(可选,pending/processing/completed)
+  - page: 页码(默认1)
+  - pageSize: 每页条数(默认10)
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: {
+      total: 100,        // 总条数
+      pageCount: 10,     // 总页数
+      currentPage: 1,    // 当前页码
+      items: [           // 问题列表
+        {
+          id: "ISSUE-001",
+          title: "系统登录异常",
+          status: "processing",     // pending/processing/completed
+          priority: "high",         // high/medium/low
+          createTime: "2024-03-15 10:30:00",
+          deadline: "2024-03-25 18:00:00",
+          description: "问题描述内容...",
+          assignee: {
+            id: "1",
+            name: "张三"
+          },
+          creator: {
+            id: "2",
+            name: "李四"
+          }
+        }
+      ]
+    }
+  }
+错误响应:
+  {
+    code: 1,
+    message: "获取问题列表失败"
+  }
+
+### 2. 获取问题详情
+GET /api/issues/:id
+描述: 获取问题详情和处理记录
+请求头:
+  - Authorization: Bearer <token>
+路径参数:
+  - id: 问题ID
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: {
+      id: "ISSUE-001",
+      title: "系统登录异常",
+      status: "processing",
+      priority: "high",
+      createTime: "2024-03-15 10:30:00",
+      deadline: "2024-03-25 18:00:00",
+      description: "问题描述详细内容...",
+      assignee: {
+        id: "1",
+        name: "张三"
+      },
+      creator: {
+        id: "2",
+        name: "李四"
+      },
+      records: [
+        {
+          id: 1,
+          content: "处理记录内容",
+          createTime: "2024-03-15 10:30:00",
+          user: {
+            id: "1",
+            name: "张三"
+          }
+        }
+      ]
+    }
+  }
+错误响应:
+  {
+    code: 1,
+    message: "问题不存在"
+  }
+
+### 3. 创建问题
+POST /api/issues
+描述: 创建新问题
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - title: 问题标题(必填)
+  - priority: 优先级(可选,high/medium/low,默认medium)
+  - status: 状态(可选,pending/processing/completed,默认pending)
+  - description: 问题描述(可选)
+  - deadline: 截止时间(可选,格式:YYYY-MM-DD HH:mm:ss)
+  - assigneeId: 负责人ID(可选)
+响应:
+  {
+    code: 0,
+    message: "创建成功",
+    data: {
+      id: "ISSUE-001"       // 新创建的问题ID
+    }
+  }
+错误响应:
+  {
+    code: 1,
+    message: "问题标题不能为空"
+  }
+
+### 4. 更新问题
+PUT /api/issues/:id
+描述: 更新问题信息（只有创建人和负责人可以修改）
+请求头:
+  - Authorization: Bearer <token>
+路径参数:
+  - id: 问题ID
+请求参数:
+  - title: 问题标题(可选)
+  - priority: 优先级(可选,high/medium/low)
+  - status: 状态(可选,pending/processing/completed)
+  - description: 问题描述(可选)
+  - deadline: 截止时间(可选,格式:YYYY-MM-DD HH:mm:ss)
+  - assigneeId: 负责人ID(可选)
+响应:
+  {
+    code: 0,
+    message: "更新成功"
+  }
+错误响应:
+  {
+    code: 1,
+    message: "问题不存在"
+  }
+或
+  {
+    code: 1,
+    message: "您没有权限修改此问题，只有问题创建人和负责人可以修改"
+  }
+或
+  {
+    code: 1,
+    message: "没有要更新的字段"
+  }
+
+### 5. 添加处理记录
+POST /api/issues/:id/records
+描述: 添加问题处理记录（只有创建人和负责人可以添加）
+请求头:
+  - Authorization: Bearer <token>
+路径参数:
+  - id: 问题ID
+请求参数:
+  - content: 处理记录内容(必填)
+  - newStatus: 更新问题状态(可选,pending/processing/completed)
+响应:
+  {
+    code: 0,
+    message: "添加成功",
+    data: {
+      id: 1,
+      content: "处理记录内容",
+      createTime: "2024-03-15 10:30:00",
+      user: {
+        id: "1",
+        name: "张三"
+      }
+    }
+  }
+错误响应:
+  {
+    code: 1,
+    message: "处理记录内容不能为空"
+  }
+或
+  {
+    code: 1,
+    message: "问题不存在"
+  }
+或
+  {
+    code: 1,
+    message: "您没有权限添加处理记录，只有问题创建人和负责人可以添加"
+  }
+
+## 二、用户管理API（用于问题跟踪系统）
+
+### 1. 获取用户列表（用于选择负责人）
+GET /api/users/list
+描述: 获取活跃用户列表
+请求头:
+  - Authorization: Bearer <token>
+响应:
+  {
+    code: 0,
+    message: "success",
+    data: [
+      {
+        id: "1",
+        name: "张三"
+      },
+      {
+        id: "2",
+        name: "李四"
+      }
+    ]
+  }
+错误响应:
+  {
+    code: 1,
+    message: "获取用户列表失败"
+  }
+
+## 三、权限说明
+
+1. 问题的修改权限仅限于问题创建人和负责人
+2. 添加处理记录的权限也仅限于问题创建人和负责人
+3. 所有接口都需要token验证，确保用户已登录
+4. 问题创建时会自动记录创建人（通过token获取当前用户ID） 

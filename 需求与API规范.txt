@@ -1,0 +1,301 @@
+# 问题跟踪系统需求与API规范
+
+## 1. 系统功能需求
+
+### 1.1 基本功能
+- 问题列表展示：显示所有问题，包括标题、状态、优先级、负责人等信息
+- 问题详情查看：点击问题卡片进入详情抽屉
+- 问题搜索与筛选：通过关键词搜索和状态筛选
+- 问题创建功能：创建新的问题记录
+- 问题编辑功能：修改现有问题信息
+- 处理记录功能：查看和添加问题的处理记录
+
+### 1.2 状态流程显示优化
+- 采用横向流程条显示问题状态（待处理、处理中、已完成）
+- 当前状态UI放大显示（比例115%），增加视觉焦点
+- 当前状态添加背景色和阴影，形成浮动效果
+- 当前状态的步骤点增大并加强边框
+- 为不同状态设置不同颜色（待处理：红色、处理中：蓝色、已完成：绿色）
+- 当前状态下方添加视觉指示器
+- 添加过渡动画效果，使状态变化更加平滑
+- 已完成状态步骤的连接线增强显示
+
+### 1.3 其他UI优化
+- 截止日期临近时提供视觉警告
+- 根据优先级设置不同颜色标签
+- 设置合理的卡片间距和内部边距
+- 浏览卡片时添加悬停效果
+
+## 2. API规范
+
+### 2.1 获取问题列表 API
+
+**接口地址**：`/api/issues`
+
+**请求方式**：GET
+
+**请求参数**：
+```json
+{
+  "keyword": "string", // 可选，搜索关键词
+  "status": "string",  // 可选，状态筛选（pending/processing/completed）
+  "page": 1,           // 页码，默认1
+  "pageSize": 10       // 每页条数，默认10
+}
+```
+
+**返回数据**：
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "total": 100,        // 总条数
+    "pageCount": 10,     // 总页数
+    "currentPage": 1,    // 当前页码
+    "items": [           // 问题列表
+      {
+        "id": "ISSUE-001",
+        "title": "系统登录异常",
+        "status": "processing",     // pending/processing/completed
+        "priority": "high",         // high/medium/low
+        "createTime": "2024-03-15",
+        "deadline": "2024-03-25 18:00",
+        "description": "问题描述内容...",
+        "assignee": {
+          "id": "1",
+          "name": "张三",
+          "avatar": "头像URL"
+        }
+      }
+    ]
+  }
+}
+```
+
+### 2.2 获取问题详情 API
+
+**接口地址**：`/api/issues/:id`
+
+**请求方式**：GET
+
+**路径参数**：
+- `id`: 问题ID
+
+**返回数据**：
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": "ISSUE-001",
+    "title": "系统登录异常",
+    "status": "processing",
+    "priority": "high",
+    "createTime": "2024-03-15",
+    "deadline": "2024-03-25 18:00",
+    "description": "问题描述详细内容...",
+    "assignee": {
+      "id": "1",
+      "name": "张三",
+      "avatar": "头像URL"
+    },
+    "records": [
+      {
+        "id": 1,
+        "content": "<p>处理记录内容，支持HTML格式</p>",
+        "createTime": "2024-03-15 10:30",
+        "user": {
+          "id": "1",
+          "name": "张三",
+          "avatar": "头像URL"
+        }
+      }
+    ]
+  }
+}
+```
+
+### 2.3 创建问题 API
+
+**接口地址**：`/api/issues`
+
+**请求方式**：POST
+
+**请求参数**：
+```json
+{
+  "title": "问题标题",
+  "priority": "high",       // high/medium/low
+  "status": "pending",      // pending/processing/completed
+  "description": "问题描述",
+  "deadline": "2024-03-25 18:00",
+  "assigneeId": "1"         // 负责人ID
+}
+```
+
+**返回数据**：
+```json
+{
+  "code": 200,
+  "message": "创建成功",
+  "data": {
+    "id": "ISSUE-001"       // 新创建的问题ID
+  }
+}
+```
+
+### 2.4 更新问题 API
+
+**接口地址**：`/api/issues/:id`
+
+**请求方式**：PUT
+
+**路径参数**：
+- `id`: 问题ID
+
+**请求参数**：
+```json
+{
+  "title": "问题标题",           // 可选，不更新可不传
+  "priority": "high",          // 可选，不更新可不传
+  "status": "processing",      // 可选，不更新可不传
+  "description": "问题描述",     // 可选，不更新可不传
+  "deadline": "2024-03-25 18:00", // 可选，不更新可不传
+  "assigneeId": "1"            // 可选，不更新可不传
+}
+```
+
+**返回数据**：
+```json
+{
+  "code": 200,
+  "message": "更新成功",
+  "data": null
+}
+```
+
+### 2.5 添加处理记录 API
+
+**接口地址**：`/api/issues/:id/records`
+
+**请求方式**：POST
+
+**路径参数**：
+- `id`: 问题ID
+
+**请求参数**：
+```json
+{
+  "content": "<p>处理记录内容，支持HTML格式</p>",
+  "newStatus": "processing"  // 可选，同时更新问题状态
+}
+```
+
+**返回数据**：
+```json
+{
+  "code": 200,
+  "message": "添加成功",
+  "data": {
+    "id": 1,                // 处理记录ID
+    "content": "<p>处理记录内容，支持HTML格式</p>",
+    "createTime": "2024-03-15 10:30",
+    "user": {
+      "id": "1",
+      "name": "张三",
+      "avatar": "头像URL"
+    }
+  }
+}
+```
+
+### 2.6 获取用户列表 API（用于选择负责人）
+
+**接口地址**：`/api/users`
+
+**请求方式**：GET
+
+**返回数据**：
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": [
+    {
+      "id": "1",
+      "name": "张三",
+      "avatar": "头像URL"
+    },
+    {
+      "id": "2",
+      "name": "李四",
+      "avatar": "头像URL"
+    },
+    {
+      "id": "3",
+      "name": "王五",
+      "avatar": "头像URL"
+    }
+  ]
+}
+```
+
+## 3. 数据模型
+
+### 3.1 问题(Issue)
+```
+{
+  id: String,              // 问题ID，格式为ISSUE-001
+  title: String,           // 问题标题
+  status: String,          // 状态：pending/processing/completed
+  priority: String,        // 优先级：high/medium/low
+  createTime: String,      // 创建时间
+  deadline: String,        // 截止时间
+  description: String,     // 问题描述
+  assigneeId: String,      // 负责人ID
+  records: Array           // 处理记录列表
+}
+```
+
+### 3.2 处理记录(Record)
+```
+{
+  id: Number,              // 记录ID
+  issueId: String,         // 所属问题ID
+  content: String,         // 记录内容，支持HTML
+  createTime: String,      // 创建时间
+  userId: String           // 创建用户ID
+}
+```
+
+### 3.3 用户(User)
+```
+{
+  id: String,              // 用户ID
+  name: String,            // 用户名称
+  avatar: String           // 用户头像URL
+}
+```
+
+## 4. 前端实现细节
+
+### 4.1 状态流程条样式
+- 流程条采用flex布局，三个状态点均匀分布
+- 当前状态放大1.15倍，增加白色背景和阴影
+- 当前状态的圆点增大至16px，加粗边框
+- 为不同状态设置不同颜色标识
+- 添加过渡动画，使状态变化流畅
+- 已完成的连接线加粗至3px
+
+### 4.2 界面交互
+- 卡片鼠标悬停效果：轻微上浮并增加阴影
+- 添加处理记录时可选择更新问题状态
+- 截止日期临近时显示"即将到期"标签
+- 创建和编辑问题时添加表单验证
+
+## 5. 部署与兼容性要求
+- 支持主流浏览器：Chrome、Firefox、Edge最新版
+- 移动端自适应布局
+- 响应时间要求：API响应时间<500ms
+- 初始加载时间：<2s 
