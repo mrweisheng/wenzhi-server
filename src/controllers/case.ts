@@ -3,6 +3,9 @@ import pool from '../config/db'
 import path from 'path'
 import fs from 'fs-extra'
 
+// 上传目录路径
+const uploadDir = '/var/www/uploads'
+
 // 生成案例ID
 async function generateCaseId(): Promise<string> {
   const [result]: any = await pool.query(

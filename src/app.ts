@@ -48,7 +48,7 @@ const startServer = async () => {
     app.use(express.urlencoded({ extended: true })) // 添加对URL编码表单的支持
     
     // 配置静态文件服务
-    const uploadDir = path.join(process.cwd(), 'upload')
+    const uploadDir = '/var/www/uploads'
     app.use('/upload', express.static(uploadDir))
     
     // 注册路由

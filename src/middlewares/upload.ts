@@ -4,7 +4,7 @@ import fs from 'fs-extra'
 import { Request } from 'express'
 
 // 确保上传目录存在
-const uploadDir = path.join(process.cwd(), 'upload')
+const uploadDir = '/var/www/uploads'
 fs.ensureDirSync(uploadDir)
 
 // 配置存储
