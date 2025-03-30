@@ -1,0 +1,23 @@
+[Unit]
+Description=Wenzhi Server Node.js Application
+After=network.target mysql.service
+
+[Service]
+WorkingDirectory=/root/home/wenzhi-server
+ExecStart=/root/.nvm/versions/node/v22.14.0/bin/npx ts-node src/app.ts
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wenzhi-server
+User=root
+Group=root
+Environment=NODE_ENV=production
+
+# 确保日志目录存在并具有正确权限
+ExecStartPre=/bin/mkdir -p /var/log/wenzhi-server
+ExecStartPre=/bin/chown -R root:root /var/log/wenzhi-server
+ExecStartPre=/bin/chmod -R 755 /var/log/wenzhi-server
+
+[Install]
+WantedBy=multi-user.target 

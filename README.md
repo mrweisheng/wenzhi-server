@@ -153,4 +153,42 @@ npm run build
 ### 生产环境运行
 ```
 npm start
-``` 
+```
+
+## 日志系统
+
+系统使用Winston日志库实现了完整的日志记录功能：
+
+1. **日志位置**: 所有日志文件存储在 `/var/log/wenzhi-server/` 目录下
+2. **日志文件**:
+   - 应用日志: `wenzhi-server-YYYY-MM-DD.log`
+   - 错误日志: `wenzhi-server-error-YYYY-MM-DD.log`
+   - 最新日志链接: `/var/log/wenzhi-server.log` (指向当天日志文件的符号链接)
+
+3. **日志级别**:
+   - 生产环境: INFO及以上级别
+   - 开发环境: DEBUG及以上级别
+
+4. **日志内容**:
+   - HTTP请求日志 (访问路径、状态码、响应时间)
+   - 错误日志 (详细错误信息和堆栈跟踪)
+   - 应用状态日志 (启动、关闭等系统事件)
+   - 数据库操作日志 (连接错误等)
+
+5. **日志查看**:
+   ```bash
+   # 查看最新日志
+   cat /var/log/wenzhi-server.log
+   
+   # 实时查看日志更新
+   tail -f /var/log/wenzhi-server.log
+   
+   # 查看错误日志
+   cat /var/log/wenzhi-server-error-$(date +%Y-%m-%d).log
+   ```
+
+6. **日志轮转**:
+   - 按天自动轮转
+   - 单个日志文件最大20MB
+   - 保留最近14天的日志
+   - 旧日志自动压缩归档 

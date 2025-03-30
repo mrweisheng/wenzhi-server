@@ -14,6 +14,8 @@ import writerRatingRouter from './routes/writerRating'
 import caseRouter from './routes/case'
 import { errorHandler } from './middlewares/error'
 import { testConnection, query } from './config/db'
+import { log } from './config/logger'
+import morgan from 'morgan'
 
 const app = express()
 
@@ -22,6 +24,7 @@ const startServer = async () => {
   try {
     // 先测试数据库连接
     await testConnection()
+    log.info('数据库连接成功')
     
     // 配置中间件
     app.use(cors({
@@ -30,6 +33,15 @@ const startServer = async () => {
       allowedHeaders: ['Content-Type', 'Authorization'],
       credentials: true,
       maxAge: 86400 // 预检请求结果缓存24小时
+    }))
+    
+    // 配置HTTP请求日志
+    app.use(morgan('combined', {
+      stream: {
+        write: (message: string) => {
+          log.http(message.trim())
+        }
+      }
     }))
     
     app.use(express.json())
@@ -64,6 +76,7 @@ const startServer = async () => {
           uptime: process.uptime()
         })
       } catch (error: any) {
+        log.error('健康检查失败', error)
         res.status(503).json({
           status: 'error',
           database: 'disconnected',
@@ -79,15 +92,18 @@ const startServer = async () => {
     const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000
     
     app.listen(PORT, '0.0.0.0', () => {
-      console.log(`
+      const startupMessage = `
         ================================
         🚀 服务器启动成功!
         📡 端口: ${PORT}
         🕒 时间: ${new Date().toLocaleString()}
         ================================
-      `)
+      `
+      console.log(startupMessage)
+      log.info('服务器启动成功', { port: PORT })
     })
   } catch (error: any) {
+    log.error('服务器启动失败', error)
     console.error('服务器启动失败:', error)
     process.exit(1)
   }

@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
+import { log } from '../config/logger'
 
 export const errorHandler = (
   err: Error,
@@ -6,6 +7,13 @@ export const errorHandler = (
   res: Response,
   next: NextFunction
 ) => {
+  log.error('请求处理错误', {
+    path: req.path,
+    method: req.method,
+    error: err.message,
+    stack: err.stack
+  })
+
   console.error('错误时间:', new Date().toISOString())
   console.error('请求路径:', req.path)
   console.error('请求方法:', req.method)
