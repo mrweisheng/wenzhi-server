@@ -236,7 +236,7 @@ export const getCustomerOrderById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params
 
-    const [orders]: any = await pool.query(
+    const [ordersResult]: any = await pool.query(
       `SELECT co.*, 
         CONCAT(u.first_name, ' ', u.last_name) as customer_service_name
       FROM customer_orders co
@@ -244,6 +244,8 @@ export const getCustomerOrderById = async (req: Request, res: Response) => {
       WHERE co.id = ?`,
       [id]
     )
+
+    const orders = Array.isArray(ordersResult) ? ordersResult : []
 
     if (orders.length === 0) {
       return res.status(404).json({
@@ -269,7 +271,37 @@ export const getCustomerOrderById = async (req: Request, res: Response) => {
 export const updateCustomerOrder = async (req: Request, res: Response) => {
   try {
     const { id } = req.params
-    const updateData = req.body
+    const updateData: Record<string, any> = req.body
+
+    // 检查数据中是否有order_id，如果有，验证是否已存在
+    if (updateData.order_id) {
+      const [existingOrder]: any = await pool.query(
+        'SELECT id FROM customer_orders WHERE order_id = ? AND id != ?',
+        [updateData.order_id, id]
+      )
+
+      if (existingOrder && existingOrder.length > 0) {
+        return res.status(400).json({
+          code: 1,
+          message: '订单号已存在'
+        })
+      }
+    }
+
+    // 检查写手是否存在
+    if (updateData.writer_id) {
+      const [writer]: any = await pool.query(
+        'SELECT id FROM writer_info WHERE id = ?',
+        [updateData.writer_id]
+      )
+
+      if (!writer || writer.length === 0) {
+        return res.status(400).json({
+          code: 1,
+          message: '指定的写手不存在'
+        })
+      }
+    }
 
     // 更新订单
     await pool.query(

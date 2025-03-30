@@ -1,0 +1,92 @@
+<VirtualHost *:80>
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/wenzhi
+    ServerName 118.31.76.202
+
+    ErrorLog ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
+
+    # 加载必要模块
+    <IfModule !proxy_module>
+        Error "proxy_module 未启用，请运行 sudo a2enmod proxy"
+    </IfModule>
+    <IfModule !proxy_http_module>
+        Error "proxy_http_module 未启用，请运行 sudo a2enmod proxy_http"
+    </IfModule>
+    <IfModule !headers_module>
+        Error "headers_module 未启用，请运行 sudo a2enmod headers"
+    </IfModule>
+    <IfModule !rewrite_module>
+        Error "rewrite_module 未启用，请运行 sudo a2enmod rewrite"
+    </IfModule>
+
+    # 允许访问静态文件
+    <Directory /var/www/wenzhi>
+        Options -Indexes +FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+    
+    # 确保 /wenzhisystem 路径指向正确目录
+    Alias /wenzhisystem/ /var/www/wenzhi/
+    
+    # 静态文件访问配置 - 上传图片目录
+    Alias /upload/ /var/www/uploads/
+    <Directory /var/www/uploads>
+        Options -Indexes +FollowSymLinks
+        AllowOverride None
+        Require all granted
+        
+        # 启用CORS以便前端可以直接访问图片
+        <IfModule headers_module>
+            Header set Access-Control-Allow-Origin "*"
+            Header set Access-Control-Allow-Methods "GET, OPTIONS"
+            Header set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept"
+        </IfModule>
+    </Directory>
+    
+    # API请求代理到Node.js应用
+    ProxyPass /api http://localhost:3000/api
+    ProxyPassReverse /api http://localhost:3000/api
+    
+    # 健康检查代理
+    ProxyPass /health http://localhost:3000/health
+    ProxyPassReverse /health http://localhost:3000/health
+
+    # 设置CORS响应头
+    <Location "/api">
+        <IfModule headers_module>
+            Header always set Access-Control-Allow-Origin "*"
+            Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+            Header always set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+            Header always set Access-Control-Allow-Credentials "true"
+            
+            # 处理预检请求
+            RewriteEngine On
+            RewriteCond %{REQUEST_METHOD} OPTIONS
+            RewriteRule ^(.*)$ $1 [R=200,L]
+        </IfModule>
+    </Location>
+    
+    # 错误页面配置
+    ErrorDocument 404 /404.html
+    ErrorDocument 500 /500.html
+    
+    # 缓存控制
+    <IfModule headers_module>
+        <FilesMatch "\.(jpg|jpeg|png|gif|ico)$">
+            Header set Cache-Control "max-age=2592000, public"
+        </FilesMatch>
+        <FilesMatch "\.(css|js)$">
+            Header set Cache-Control "max-age=86400, public"
+        </FilesMatch>
+    </IfModule>
+    
+    # 防止访问敏感文件
+    <FilesMatch "^\.ht">
+        Require all denied
+    </FilesMatch>
+    <FilesMatch "^(\.env|package\.json|package-lock\.json|tsconfig\.json)$">
+        Require all denied
+    </FilesMatch>
+</VirtualHost> 

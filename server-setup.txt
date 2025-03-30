@@ -1,0 +1,110 @@
+# 服务器部署指南
+
+## 1. Apache配置
+
+### 启用必要的Apache模块
+```bash
+sudo a2enmod proxy proxy_http headers rewrite
+sudo systemctl restart apache2
+```
+
+### 部署Apache配置
+将apache-config.txt文件内容复制到Apache站点配置：
+```bash
+sudo cp apache-config.txt /etc/apache2/sites-available/wenzhi.conf
+sudo a2ensite wenzhi.conf
+sudo systemctl restart apache2
+```
+
+### 创建必要的目录
+```bash
+sudo mkdir -p /var/www/wenzhi
+sudo mkdir -p /var/www/uploads
+sudo chown -R www-data:www-data /var/www/uploads
+sudo chmod -R 755 /var/www/uploads
+```
+
+## 2. Node.js应用部署
+
+### 构建TypeScript应用
+```bash
+cd /路径/到/后端项目
+npm install
+npm run build
+```
+
+### 配置systemd服务
+创建systemd服务文件：
+```bash
+sudo nano /etc/systemd/system/wenzhi-server.service
+```
+
+写入以下内容：
+```
+[Unit]
+Description=Wenzhi Node.js Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/路径/到/后端项目
+ExecStart=/usr/bin/node dist/app.js
+Restart=on-failure
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=wenzhi-server
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 启动服务
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable wenzhi-server
+sudo systemctl start wenzhi-server
+```
+
+### 检查服务状态
+```bash
+sudo systemctl status wenzhi-server
+```
+
+### 查看日志
+```bash
+sudo journalctl -u wenzhi-server -f
+```
+
+## 3. 常见问题排查
+
+### Node.js版本问题
+如果遇到模块导入错误（如找不到'node:path'），确保使用编译后的JavaScript文件运行，不要直接使用ts-node。
+
+### 数据库连接错误
+检查MySQL/MariaDB服务是否正常运行：
+```bash
+sudo systemctl status mysql
+```
+
+确保数据库凭据正确：
+```bash
+nano .env  # 编辑环境变量文件，检查数据库配置
+```
+
+### Apache代理问题
+检查Apache错误日志：
+```bash
+sudo tail -f /var/log/apache2/error.log
+```
+
+如果出现代理错误，确保Node.js应用正在运行且监听正确的端口（默认3000）。
+
+### 权限问题
+如果上传文件出现问题，检查目录权限：
+```bash
+sudo chown -R www-data:www-data /var/www/uploads
+sudo chmod -R 755 /var/www/uploads
+``` 
