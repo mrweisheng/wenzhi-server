@@ -49,7 +49,7 @@ const startServer = async () => {
     
     // 配置静态文件服务
     const uploadDir = path.join(process.cwd(), 'upload')
-    app.use('/uploads', express.static(uploadDir))
+    app.use('/upload', express.static(uploadDir))
     
     // 注册路由
     app.use('/api/auth', authRoutes)
