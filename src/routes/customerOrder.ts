@@ -5,7 +5,8 @@ import {
   getCustomerOrders,
   getCustomerOrderById,
   updateCustomerOrder,
-  deleteCustomerOrder
+  deleteCustomerOrder,
+  mergeCustomerOrder
 } from '../controllers/customerOrder'
 
 const router = express.Router()
@@ -15,5 +16,6 @@ router.get('/', auth, getCustomerOrders)
 router.get('/:id', auth, getCustomerOrderById)
 router.put('/:id', auth, updateCustomerOrder)
 router.delete('/:id', auth, deleteCustomerOrder)
+router.post('/merge', auth, mergeCustomerOrder)
 
 export default router 

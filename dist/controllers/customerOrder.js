@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteCustomerOrder = exports.updateCustomerOrder = exports.getCustomerOrderById = exports.getCustomerOrders = exports.createCustomerOrder = void 0;
+exports.deleteCustomerOrder = exports.updateCustomerOrder = exports.getCustomerOrderById = exports.getCustomerOrders = exports.createCustomerOrder = exports.mergeCustomerOrder = void 0;
 const db_1 = __importDefault(require("../config/db"));
 // 创建客服订单
 const createCustomerOrder = async (req, res) => {
@@ -236,3 +236,61 @@ const deleteCustomerOrder = async (req, res) => {
     }
 };
 exports.deleteCustomerOrder = deleteCustomerOrder;
+// 手动合并客服订单到订单总表
+const mergeCustomerOrder = async (req, res) => {
+    try {
+        const userId = req.userId;
+        // 检查当前用户是否有权限操作（必须是客服、超管或财务）
+        const [currentUser] = await db_1.default.query(`SELECT r.role_name 
+       FROM users u 
+       INNER JOIN roles r ON u.role_id = r.id 
+       WHERE u.id = ?`, [userId]);
+        if (currentUser.length === 0 ||
+            !(currentUser[0].role_name.includes('客服') ||
+                currentUser[0].role_name.includes('超级管理员') ||
+                currentUser[0].role_name.includes('财务'))) {
+            return res.status(403).json({
+                code: 1,
+                message: '您没有权限执行此操作'
+            });
+        }
+        // 查找所有符合条件的订单进行合并
+        // 条件：客服订单表中有记录，且订单总表中也有相同订单号的记录
+        const [orderPairs] = await db_1.default.query(`SELECT co.order_id, co.customer_id, co.writer_id
+       FROM customer_orders co
+       INNER JOIN orders o ON co.order_id = o.order_id
+       WHERE (o.customer_id IS NULL OR o.writer_id IS NULL)`); // 订单总表中客服ID或写手ID至少有一个为空
+        if (orderPairs.length === 0) {
+            return res.status(404).json({
+                code: 1,
+                message: '没有符合条件的订单需要合并'
+            });
+        }
+        // 批量更新所有需要合并的订单
+        const mergedOrders = [];
+        for (const order of orderPairs) {
+            await db_1.default.query('UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?', [order.customer_id, order.writer_id, order.order_id]);
+            mergedOrders.push({
+                order_id: order.order_id,
+                customer_id: order.customer_id,
+                writer_id: order.writer_id
+            });
+        }
+        res.json({
+            code: 0,
+            message: '合并成功',
+            data: {
+                total: mergedOrders.length,
+                merged_orders: mergedOrders
+            }
+        });
+    }
+    catch (error) {
+        console.error('Merge customer order error:', error);
+        res.status(500).json({
+            code: 1,
+            message: '服务器错误'
+        });
+    }
+};
+exports.mergeCustomerOrder = mergeCustomerOrder;

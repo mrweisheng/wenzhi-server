@@ -12,4 +12,5 @@ router.get('/', auth_1.auth, customerOrder_1.getCustomerOrders);
 router.get('/:id', auth_1.auth, customerOrder_1.getCustomerOrderById);
 router.put('/:id', auth_1.auth, customerOrder_1.updateCustomerOrder);
 router.delete('/:id', auth_1.auth, customerOrder_1.deleteCustomerOrder);
+router.post('/merge', auth_1.auth, customerOrder_1.mergeCustomerOrder);
 exports.default = router;

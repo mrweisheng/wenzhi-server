@@ -864,6 +864,39 @@ DELETE /api/customer-orders/:id
     message: "您没有权限执行此操作"
   }
 
+### 6. 手动合并客服订单到订单总表
+POST /api/customer-orders/merge
+描述: 手动触发将客服订单表中的客服ID和写手ID信息批量更新到订单总表中，处理所有符合条件的订单
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  无需参数，系统会自动处理所有符合条件的订单
+响应:
+  {
+    code: 0,
+    message: "合并成功",
+    data: {
+      total: 处理订单总数,
+      merged_orders: [
+        {
+          order_id: 订单编号,
+          customer_id: 客服ID,
+          writer_id: 写手ID
+        }
+      ]
+    }
+  }
+错误响应:
+  {
+    code: 1,
+    message: "没有符合条件的订单需要合并"
+  }
+或
+  {
+    code: 1,
+    message: "您没有权限执行此操作"
+  }
+
 ## 九、写手评分管理模块
 
 ### 1. 添加/更新写手评分
