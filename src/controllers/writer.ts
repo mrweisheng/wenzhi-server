@@ -191,6 +191,16 @@ async function generateWriterId(): Promise<string> {
   return writerId
 }
 
+function formatDate(date: Date | string): string | null {
+  if (!date) return null;
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return null;
+  const year = d.getFullYear();
+  const month = (d.getMonth() + 1).toString().padStart(2, '0');
+  const day = d.getDate().toString().padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 // 创建写手
 export const createWriter = async (req: Request, res: Response) => {
   try {
@@ -200,6 +210,11 @@ export const createWriter = async (req: Request, res: Response) => {
     writer.writer_id = await generateWriterId()
     writer.created_time = new Date()
     writer.created_by = (req as any).userId
+
+    // 格式化 apply_date 字段
+    if (writer.apply_date) {
+      writer.apply_date = formatDate(writer.apply_date)
+    }
 
     // 添加唯一性约束检查
     const [existing]: any = await pool.query(
@@ -362,6 +377,11 @@ export const openCreateWriter = async (req: Request, res: Response) => {
     writer.writer_id = await generateWriterId()
     writer.created_time = new Date()
     // 不设置 created_by
+
+    // 格式化 apply_date 字段
+    if (writer.apply_date) {
+      writer.apply_date = formatDate(writer.apply_date)
+    }
 
     // 添加唯一性约束检查
     const [existing]: any = await pool.query(

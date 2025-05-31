@@ -159,6 +159,17 @@ async function generateWriterId() {
     }
     return writerId;
 }
+function formatDate(date) {
+    if (!date)
+        return null;
+    const d = new Date(date);
+    if (isNaN(d.getTime()))
+        return null;
+    const year = d.getFullYear();
+    const month = (d.getMonth() + 1).toString().padStart(2, '0');
+    const day = d.getDate().toString().padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
 // 创建写手
 const createWriter = async (req, res) => {
     try {
@@ -167,6 +178,10 @@ const createWriter = async (req, res) => {
         writer.writer_id = await generateWriterId();
         writer.created_time = new Date();
         writer.created_by = req.userId;
+        // 格式化 apply_date 字段
+        if (writer.apply_date) {
+            writer.apply_date = formatDate(writer.apply_date);
+        }
         // 添加唯一性约束检查
         const [existing] = await db_1.default.query('SELECT id FROM writer_info WHERE writer_id = ?', [writer.writer_id]);
         if (existing.length > 0) {
@@ -303,6 +318,10 @@ const openCreateWriter = async (req, res) => {
         writer.writer_id = await generateWriterId();
         writer.created_time = new Date();
         // 不设置 created_by
+        // 格式化 apply_date 字段
+        if (writer.apply_date) {
+            writer.apply_date = formatDate(writer.apply_date);
+        }
         // 添加唯一性约束检查
         const [existing] = await db_1.default.query('SELECT id FROM writer_info WHERE writer_id = ?', [writer.writer_id]);
         if (existing.length > 0) {
