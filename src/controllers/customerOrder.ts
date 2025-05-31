@@ -4,7 +4,7 @@ import pool from '../config/db'
 // 创建客服订单
 export const createCustomerOrder = async (req: Request, res: Response) => {
   try {
-    const { 
+    const {
       order_id,
       date,
       is_fixed,
@@ -19,7 +19,8 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
       customer_name,
       order_amount,
       refund_amount,
-      special_situation
+      special_situation,
+      dispatch_id
     } = req.body;
     
     const userId = (req as any).userId;
@@ -41,14 +42,6 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
       });
     }
 
-    // 检查必填字段
-    if (!writer_id) {
-      return res.status(400).json({
-        code: 1,
-        message: '写手ID为必填项'
-      });
-    }
-
     // 检查订单号是否已存在
     const [existingOrder]: any = await pool.query(
       'SELECT order_id FROM customer_orders WHERE order_id = ?',
@@ -62,17 +55,32 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
       });
     }
 
-    // 检查写手是否存在
-    const [writer]: any = await pool.query(
-      'SELECT id FROM writer_info WHERE id = ?',
-      [writer_id]
-    );
+    // 检查派单编号唯一性（如果有填写）
+    if (dispatch_id) {
+      const [existingDispatch]: any = await pool.query(
+        'SELECT id FROM customer_orders WHERE dispatch_id = ?',
+        [dispatch_id]
+      );
+      if (existingDispatch.length > 0) {
+        return res.status(400).json({
+          code: 1,
+          message: '派单编号已存在'
+        });
+      }
+    }
 
-    if (writer.length === 0) {
-      return res.status(400).json({
-        code: 1,
-        message: '指定的写手不存在'
-      });
+    // 检查写手是否存在（如果有填写）
+    if (writer_id) {
+      const [writer]: any = await pool.query(
+        'SELECT id FROM writer_info WHERE id = ?',
+        [writer_id]
+      );
+      if (writer.length === 0) {
+        return res.status(400).json({
+          code: 1,
+          message: '指定的写手不存在'
+        });
+      }
     }
 
     // 创建订单，自动设置客服ID为当前用户ID
@@ -86,7 +94,7 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
         word_count,
         fee,
         customer_id: userId, // 强制设置为当前登录的客服ID
-        writer_id,
+        writer_id: writer_id || null,
         exchange_time,
         payment_channel,
         store_name,
@@ -94,7 +102,8 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
         customer_name,
         order_amount,
         refund_amount,
-        special_situation
+        special_situation,
+        dispatch_id: dispatch_id || null
       }
     );
 
@@ -106,10 +115,18 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
 
     // 如果在系统订单表中找到匹配的订单，则更新该订单的客服和写手信息
     if (systemOrder.length > 0) {
-      await pool.query(
-        'UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?',
-        [userId, writer_id, order_id]
-      );
+      // 只同步 customer_id，writer_id 有值才同步
+      if (writer_id) {
+        await pool.query(
+          'UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?',
+          [userId, writer_id, order_id]
+        );
+      } else {
+        await pool.query(
+          'UPDATE orders SET customer_id = ? WHERE order_id = ?',
+          [userId, order_id]
+        );
+      }
     }
 
     res.json({
@@ -288,7 +305,21 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
       }
     }
 
-    // 检查写手是否存在
+    // 检查派单编号唯一性（如果有填写）
+    if (updateData.dispatch_id) {
+      const [existingDispatch]: any = await pool.query(
+        'SELECT id FROM customer_orders WHERE dispatch_id = ? AND id != ?',
+        [updateData.dispatch_id, id]
+      )
+      if (existingDispatch && existingDispatch.length > 0) {
+        return res.status(400).json({
+          code: 1,
+          message: '派单编号已存在'
+        })
+      }
+    }
+
+    // 检查写手是否存在（如果有填写）
     if (updateData.writer_id) {
       const [writer]: any = await pool.query(
         'SELECT id FROM writer_info WHERE id = ?',
@@ -389,14 +420,22 @@ export const mergeCustomerOrder = async (req: Request, res: Response) => {
     // 批量更新所有需要合并的订单
     const mergedOrders = []
     for (const order of orderPairs) {
-      await pool.query(
-        'UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?',
-        [order.customer_id, order.writer_id, order.order_id]
-      )
+      // customer_id 一定同步，writer_id 有值才同步
+      if (order.writer_id) {
+        await pool.query(
+          'UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?',
+          [order.customer_id, order.writer_id, order.order_id]
+        )
+      } else {
+        await pool.query(
+          'UPDATE orders SET customer_id = ? WHERE order_id = ?',
+          [order.customer_id, order.order_id]
+        )
+      }
       mergedOrders.push({
         order_id: order.order_id,
         customer_id: order.customer_id,
-        writer_id: order.writer_id
+        writer_id: order.writer_id || null
       })
     }
 

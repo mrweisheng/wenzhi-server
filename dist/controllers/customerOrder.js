@@ -8,7 +8,7 @@ const db_1 = __importDefault(require("../config/db"));
 // 创建客服订单
 const createCustomerOrder = async (req, res) => {
     try {
-        const { order_id, date, is_fixed, order_content, word_count, fee, writer_id, exchange_time, payment_channel, store_name, new_customer, customer_name, order_amount, refund_amount, special_situation } = req.body;
+        const { order_id, date, is_fixed, order_content, word_count, fee, writer_id, exchange_time, payment_channel, store_name, new_customer, customer_name, order_amount, refund_amount, special_situation, dispatch_id } = req.body;
         const userId = req.userId;
         // 检查当前用户是否是客服角色
         const [userRole] = await db_1.default.query(`SELECT r.role_name 
@@ -22,13 +22,6 @@ const createCustomerOrder = async (req, res) => {
                 message: '非客服角色无权创建订单'
             });
         }
-        // 检查必填字段
-        if (!writer_id) {
-            return res.status(400).json({
-                code: 1,
-                message: '写手ID为必填项'
-            });
-        }
         // 检查订单号是否已存在
         const [existingOrder] = await db_1.default.query('SELECT order_id FROM customer_orders WHERE order_id = ?', [order_id]);
         if (existingOrder.length > 0) {
@@ -37,13 +30,25 @@ const createCustomerOrder = async (req, res) => {
                 message: '订单号已存在'
             });
         }
-        // 检查写手是否存在
-        const [writer] = await db_1.default.query('SELECT id FROM writer_info WHERE id = ?', [writer_id]);
-        if (writer.length === 0) {
-            return res.status(400).json({
-                code: 1,
-                message: '指定的写手不存在'
-            });
+        // 检查派单编号唯一性（如果有填写）
+        if (dispatch_id) {
+            const [existingDispatch] = await db_1.default.query('SELECT id FROM customer_orders WHERE dispatch_id = ?', [dispatch_id]);
+            if (existingDispatch.length > 0) {
+                return res.status(400).json({
+                    code: 1,
+                    message: '派单编号已存在'
+                });
+            }
+        }
+        // 检查写手是否存在（如果有填写）
+        if (writer_id) {
+            const [writer] = await db_1.default.query('SELECT id FROM writer_info WHERE id = ?', [writer_id]);
+            if (writer.length === 0) {
+                return res.status(400).json({
+                    code: 1,
+                    message: '指定的写手不存在'
+                });
+            }
         }
         // 创建订单，自动设置客服ID为当前用户ID
         const [result] = await db_1.default.query('INSERT INTO customer_orders SET ?', {
@@ -54,7 +59,7 @@ const createCustomerOrder = async (req, res) => {
             word_count,
             fee,
             customer_id: userId, // 强制设置为当前登录的客服ID
-            writer_id,
+            writer_id: writer_id || null,
             exchange_time,
             payment_channel,
             store_name,
@@ -62,13 +67,20 @@ const createCustomerOrder = async (req, res) => {
             customer_name,
             order_amount,
             refund_amount,
-            special_situation
+            special_situation,
+            dispatch_id: dispatch_id || null
         });
         // 查找系统订单表中是否存在匹配的订单
         const [systemOrder] = await db_1.default.query('SELECT order_id FROM orders WHERE order_id = ?', [order_id]);
         // 如果在系统订单表中找到匹配的订单，则更新该订单的客服和写手信息
         if (systemOrder.length > 0) {
-            await db_1.default.query('UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?', [userId, writer_id, order_id]);
+            // 只同步 customer_id，writer_id 有值才同步
+            if (writer_id) {
+                await db_1.default.query('UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?', [userId, writer_id, order_id]);
+            }
+            else {
+                await db_1.default.query('UPDATE orders SET customer_id = ? WHERE order_id = ?', [userId, order_id]);
+            }
         }
         res.json({
             code: 0,
@@ -211,7 +223,17 @@ const updateCustomerOrder = async (req, res) => {
                 });
             }
         }
-        // 检查写手是否存在
+        // 检查派单编号唯一性（如果有填写）
+        if (updateData.dispatch_id) {
+            const [existingDispatch] = await db_1.default.query('SELECT id FROM customer_orders WHERE dispatch_id = ? AND id != ?', [updateData.dispatch_id, id]);
+            if (existingDispatch && existingDispatch.length > 0) {
+                return res.status(400).json({
+                    code: 1,
+                    message: '派单编号已存在'
+                });
+            }
+        }
+        // 检查写手是否存在（如果有填写）
         if (updateData.writer_id) {
             const [writer] = await db_1.default.query('SELECT id FROM writer_info WHERE id = ?', [updateData.writer_id]);
             if (!writer || writer.length === 0) {
@@ -291,11 +313,17 @@ const mergeCustomerOrder = async (req, res) => {
         // 批量更新所有需要合并的订单
         const mergedOrders = [];
         for (const order of orderPairs) {
-            await db_1.default.query('UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?', [order.customer_id, order.writer_id, order.order_id]);
+            // customer_id 一定同步，writer_id 有值才同步
+            if (order.writer_id) {
+                await db_1.default.query('UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?', [order.customer_id, order.writer_id, order.order_id]);
+            }
+            else {
+                await db_1.default.query('UPDATE orders SET customer_id = ? WHERE order_id = ?', [order.customer_id, order.order_id]);
+            }
             mergedOrders.push({
                 order_id: order.order_id,
                 customer_id: order.customer_id,
-                writer_id: order.writer_id
+                writer_id: order.writer_id || null
             });
         }
         res.json({

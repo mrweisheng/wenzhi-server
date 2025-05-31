@@ -652,8 +652,8 @@ POST /api/writers/open
   }
 或
   {
-    "code": 1,
-    "message": "服务器错误"
+    code: 1,
+    message: "服务器错误"
   }
 
 说明:
@@ -792,7 +792,8 @@ POST /api/customer-orders
   - word_count: 稿件字数(可选)
   - fee: 稿费(可选)
   - customer_id: 客服ID(可选，默认为当前登录用户)
-  - writer_id: 写手ID(必填)
+  - writer_id: 写手ID(可选)
+  - dispatch_id: 派单编号(可选，唯一，非必填)
   - exchange_time: 交稿时间(可选)
   - payment_channel: 付款渠道(可选)
   - store_name: 店铺名或客户线下(可选)
@@ -801,6 +802,10 @@ POST /api/customer-orders
   - order_amount: 订单下单金额(可选)
   - refund_amount: 退款金额(可选)
   - special_situation: 特殊情况(不结算)(可选)
+字段校验说明:
+  - dispatch_id 如有填写，必须唯一，否则返回"派单编号已存在"。
+  - writer_id 非必填，如有填写，需为有效写手ID，否则返回"指定的写手不存在"。
+  - order_id 必须唯一，否则返回"订单号已存在"。
 响应:
   {
     code: 0,
@@ -814,6 +819,16 @@ POST /api/customer-orders
   {
     code: 1,
     message: "订单号已存在"
+  }
+  或
+  {
+    code: 1,
+    message: "派单编号已存在"
+  }
+  或
+  {
+    code: 1,
+    message: "指定的写手不存在"
   }
   或
   {
@@ -895,12 +910,31 @@ PUT /api/customer-orders/:id
   - Authorization: Bearer <token>
 请求参数:
   // 同创建接口，所有字段均为可选
+字段校验说明:
+  - dispatch_id 如有填写，必须唯一，否则返回"派单编号已存在"。
+  - writer_id 非必填，如有填写，需为有效写手ID，否则返回"指定的写手不存在"。
+  - order_id 必须唯一，否则返回"订单号已存在"。
 响应:
   {
     code: 0,
     message: "更新成功"
   }
 错误响应:
+  {
+    code: 1,
+    message: "订单号已存在"
+  }
+  或
+  {
+    code: 1,
+    message: "派单编号已存在"
+  }
+  或
+  {
+    code: 1,
+    message: "指定的写手不存在"
+  }
+  或
   {
     code: 1,
     message: "订单不存在"
@@ -939,6 +973,9 @@ POST /api/customer-orders/merge
   - Authorization: Bearer <token>
 请求参数:
   无需参数，系统会自动处理所有符合条件的订单
+合并逻辑说明:
+  - 系统会查找所有 orders.customer_id 或 writer_id 为空的订单，批量用 customer_orders 的 customer_id、writer_id 进行同步。
+  - customer_id 一定同步，writer_id 仅在有值时同步。
 响应:
   {
     code: 0,
