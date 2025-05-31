@@ -351,4 +351,55 @@ export const getWriterList = async (req: Request, res: Response) => {
       message: '服务器错误'
     })
   }
+}
+
+// 开放注册写手（无token、无用户限制）
+export const openCreateWriter = async (req: Request, res: Response) => {
+  try {
+    const writer = req.body
+
+    // 自动生成writer_id
+    writer.writer_id = await generateWriterId()
+    writer.created_time = new Date()
+    // 不设置 created_by
+
+    // 添加唯一性约束检查
+    const [existing]: any = await pool.query(
+      'SELECT id FROM writer_info WHERE writer_id = ?',
+      [writer.writer_id]
+    )
+
+    if (existing.length > 0) {
+      return res.status(400).json({
+        code: 1,
+        message: '写手ID已存在'
+      })
+    }
+
+    const [result]: any = await pool.query(
+      'INSERT INTO writer_info SET ?',
+      writer
+    )
+
+    res.json({
+      code: 0,
+      data: {
+        id: result.insertId,
+        writer_id: writer.writer_id
+      },
+      message: '添加成功'
+    })
+  } catch (err: any) {
+    console.error('Create writer error:', err)
+    if (err.message === '当日写手ID序号已用尽') {
+      return res.status(400).json({
+        code: 1,
+        message: err.message
+      })
+    }
+    res.status(500).json({
+      code: 1,
+      message: '服务器错误'
+    })
+  }
 } 

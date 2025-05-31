@@ -593,6 +593,74 @@ GET /api/writers/list
     ]
   }
 
+### 新增开放写手注册
+POST /api/writers/open
+描述: 任何人可提交写手信息，每个IP每分钟最多10次，无需登录
+
+请求头:
+  无
+
+请求参数（application/json，与 /api/writers 完全一致）:
+  - name: 姓名(必填)
+  - education: 学历(必填)
+  - major: 专业(必填)
+  - writing_experience: 写作水平(必填, 枚举值: 大学水平/在职水平/事业单位水平/淘宝老手/在职老师/期刊报告科研)
+  - specialized_content: 擅长内容(可选)
+  - phone_1: 手机号1(可选)
+  - phone_2: 手机号2(可选)
+  - alipay_name: 支付宝姓名(可选)
+  - alipay_account: 支付宝账号(可选)
+  - id_number: 身份证号(可选)
+  - ip_address: IP地址(可选)
+
+请求体示例:
+  {
+    "name": "张三",
+    "education": "本科",
+    "major": "中文",
+    "writing_experience": "大学水平",
+    "specialized_content": "论文、报告",
+    "phone_1": "13800000000",
+    "alipay_name": "张三",
+    "alipay_account": "zhangsan@alipay.com"
+  }
+
+成功响应:
+  {
+    "code": 0,
+    "data": {
+      "id": 123,
+      "writer_id": "w24072001"
+    },
+    "message": "添加成功"
+  }
+
+错误响应:
+  {
+    "code": 1,
+    "message": "请求过于频繁，请稍后再试"
+  }
+或
+  {
+    "code": 1,
+    "message": "写手ID已存在"
+  }
+或
+  {
+    "code": 1,
+    "message": "当日写手ID序号已用尽"
+  }
+或
+  {
+    "code": 1,
+    "message": "服务器错误"
+  }
+
+说明:
+- 本接口无需登录，任何人可用。
+- 每个IP每分钟最多10次，超出会被限流。
+- 其它业务逻辑、字段校验与 /api/writers 完全一致。
+
 ## 六、订单管理模块
 
 ### 1. 获取订单列表
