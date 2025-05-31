@@ -7,6 +7,8 @@ exports.deleteCase = exports.createSimpleCase = exports.createCase = exports.get
 const db_1 = __importDefault(require("../config/db"));
 const path_1 = __importDefault(require("path"));
 const fs_extra_1 = __importDefault(require("fs-extra"));
+// 上传目录路径
+const uploadDir = '/var/www/uploads';
 // 生成案例ID
 async function generateCaseId() {
     const [result] = await db_1.default.query('SELECT MAX(id) as maxId FROM cases WHERE id LIKE "CASE-%"');
@@ -134,12 +136,12 @@ const createCase = async (req, res) => {
         const imageUrls = [];
         if (files && files.length > 0) {
             for (const file of files) {
-                // 获取相对路径，用于构建URL
-                const relativePath = path_1.default.relative(process.cwd(), file.path);
-                // 将Windows路径分隔符替换为URL路径分隔符
-                const urlPath = relativePath.replace(/\\/g, '/');
-                // 构建完整URL
-                const imageUrl = `http://118.31.76.202:3000/${urlPath}`;
+                // 提取年月和文件名，构建正确的URL路径
+                const pathParts = file.path.split('/');
+                const filename = pathParts[pathParts.length - 1];
+                const yearMonth = pathParts[pathParts.length - 2];
+                // 构建完整URL，直接使用Apache虚拟主机提供的路径
+                const imageUrl = `http://118.31.76.202/upload/${yearMonth}/${filename}`;
                 imageUrls.push(imageUrl);
             }
         }
@@ -233,8 +235,11 @@ const deleteCase = async (req, res) => {
                 const images = JSON.parse(caseData.images);
                 for (const imageUrl of images) {
                     // 从URL中提取文件路径
-                    const urlPath = new URL(imageUrl).pathname;
-                    const filePath = path_1.default.join(process.cwd(), urlPath.slice(1));
+                    const urlParts = imageUrl.split('/');
+                    const yearMonth = urlParts[urlParts.length - 2];
+                    const filename = urlParts[urlParts.length - 1];
+                    // 构建完整的文件路径
+                    const filePath = path_1.default.join('/var/www/uploads', yearMonth, filename);
                     // 检查文件是否存在并删除
                     if (fs_extra_1.default.existsSync(filePath)) {
                         fs_extra_1.default.unlinkSync(filePath);

@@ -8,6 +8,7 @@ const auth_1 = require("../middlewares/auth");
 const writer_1 = require("../controllers/writer");
 const writerRating_1 = require("../controllers/writerRating");
 const role_1 = require("../middlewares/role");
+const rateLimit_1 = require("../middlewares/rateLimit");
 const router = express_1.default.Router();
 // 获取写手列表
 router.get('/', auth_1.auth, writer_1.getWriters);
@@ -28,4 +29,6 @@ router.post('/:writerId/ratings', auth_1.auth, role_1.checkRatingPermission, wri
 router.get('/:writerId/ratings', auth_1.auth, writerRating_1.getWriterRatings);
 router.get('/:writerId/today-rating', auth_1.auth, writerRating_1.getWriterTodayRating);
 router.get('/:writerId/rating-by-date', auth_1.auth, writerRating_1.getWriterRatingByDate);
+// 新增：开放注册写手（无token限制，带IP限流）
+router.post('/open', rateLimit_1.writerOpenLimiter, writer_1.openCreateWriter);
 exports.default = router;

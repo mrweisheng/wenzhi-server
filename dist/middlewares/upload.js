@@ -8,7 +8,7 @@ const multer_1 = __importDefault(require("multer"));
 const path_1 = __importDefault(require("path"));
 const fs_extra_1 = __importDefault(require("fs-extra"));
 // 确保上传目录存在
-const uploadDir = path_1.default.join(process.cwd(), 'upload');
+const uploadDir = '/var/www/uploads';
 fs_extra_1.default.ensureDirSync(uploadDir);
 // 配置存储
 const storage = multer_1.default.diskStorage({

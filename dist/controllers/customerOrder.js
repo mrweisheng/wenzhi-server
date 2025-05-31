@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteCustomerOrder = exports.updateCustomerOrder = exports.getCustomerOrderById = exports.getCustomerOrders = exports.createCustomerOrder = exports.mergeCustomerOrder = void 0;
+exports.mergeCustomerOrder = exports.deleteCustomerOrder = exports.updateCustomerOrder = exports.getCustomerOrderById = exports.getCustomerOrders = exports.createCustomerOrder = void 0;
 const db_1 = __importDefault(require("../config/db"));
 // 创建客服订单
 const createCustomerOrder = async (req, res) => {
@@ -170,11 +170,12 @@ exports.getCustomerOrders = getCustomerOrders;
 const getCustomerOrderById = async (req, res) => {
     try {
         const { id } = req.params;
-        const [orders] = await db_1.default.query(`SELECT co.*, 
+        const [ordersResult] = await db_1.default.query(`SELECT co.*, 
         CONCAT(u.first_name, ' ', u.last_name) as customer_service_name
       FROM customer_orders co
       LEFT JOIN users u ON co.customer_id = u.id
       WHERE co.id = ?`, [id]);
+        const orders = Array.isArray(ordersResult) ? ordersResult : [];
         if (orders.length === 0) {
             return res.status(404).json({
                 code: 1,
@@ -200,6 +201,26 @@ const updateCustomerOrder = async (req, res) => {
     try {
         const { id } = req.params;
         const updateData = req.body;
+        // 检查数据中是否有order_id，如果有，验证是否已存在
+        if (updateData.order_id) {
+            const [existingOrder] = await db_1.default.query('SELECT id FROM customer_orders WHERE order_id = ? AND id != ?', [updateData.order_id, id]);
+            if (existingOrder && existingOrder.length > 0) {
+                return res.status(400).json({
+                    code: 1,
+                    message: '订单号已存在'
+                });
+            }
+        }
+        // 检查写手是否存在
+        if (updateData.writer_id) {
+            const [writer] = await db_1.default.query('SELECT id FROM writer_info WHERE id = ?', [updateData.writer_id]);
+            if (!writer || writer.length === 0) {
+                return res.status(400).json({
+                    code: 1,
+                    message: '指定的写手不存在'
+                });
+            }
+        }
         // 更新订单
         await db_1.default.query('UPDATE customer_orders SET ? WHERE id = ?', [updateData, id]);
         res.json({
@@ -259,7 +280,8 @@ const mergeCustomerOrder = async (req, res) => {
         const [orderPairs] = await db_1.default.query(`SELECT co.order_id, co.customer_id, co.writer_id
        FROM customer_orders co
        INNER JOIN orders o ON co.order_id = o.order_id
-       WHERE (o.customer_id IS NULL OR o.writer_id IS NULL)`); // 订单总表中客服ID或写手ID至少有一个为空
+       WHERE (o.customer_id IS NULL OR o.writer_id IS NULL)` // 订单总表中客服ID或写手ID至少有一个为空
+        );
         if (orderPairs.length === 0) {
             return res.status(404).json({
                 code: 1,

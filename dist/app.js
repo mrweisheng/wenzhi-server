@@ -5,7 +5,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
-const path_1 = __importDefault(require("path"));
 const auth_1 = __importDefault(require("./routes/auth"));
 const user_1 = __importDefault(require("./routes/user"));
 const role_1 = __importDefault(require("./routes/role"));
@@ -47,8 +46,8 @@ const startServer = async () => {
         app.use(express_1.default.json());
         app.use(express_1.default.urlencoded({ extended: true })); // 添加对URL编码表单的支持
         // 配置静态文件服务
-        const uploadDir = path_1.default.join(process.cwd(), 'upload');
-        app.use('/uploads', express_1.default.static(uploadDir));
+        const uploadDir = '/var/www/uploads';
+        app.use('/upload', express_1.default.static(uploadDir));
         // 注册路由
         app.use('/api/auth', auth_1.default);
         app.use('/api/users', user_1.default);
