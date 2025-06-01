@@ -14,6 +14,8 @@ const router = express_1.default.Router();
 router.get('/', auth_1.auth, writer_1.getWriters);
 // 获取写手简要列表
 router.get('/list', auth_1.auth, writer_1.getWriterList);
+// 快速模糊搜索写手（无token限制，适合前端实时搜索）
+router.get('/quick-search', writer_1.getWriterQuickSearch);
 // 获取写手详情
 router.get('/:id', auth_1.auth, writer_1.getWriterById);
 // 创建写手

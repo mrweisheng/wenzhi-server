@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.openCreateWriter = exports.getWriterList = exports.batchDeleteWriters = exports.deleteWriter = exports.updateWriter = exports.createWriter = exports.getWriterById = exports.getWriters = void 0;
+exports.getWriterQuickSearch = exports.openCreateWriter = exports.getWriterList = exports.batchDeleteWriters = exports.deleteWriter = exports.updateWriter = exports.createWriter = exports.getWriterById = exports.getWriters = void 0;
 const db_1 = __importDefault(require("../config/db"));
 // 获取写手列表
 const getWriters = async (req, res) => {
@@ -355,3 +355,44 @@ const openCreateWriter = async (req, res) => {
     }
 };
 exports.openCreateWriter = openCreateWriter;
+// 快速模糊搜索写手
+const getWriterQuickSearch = async (req, res) => {
+    try {
+        let { keyword = '', page = 1, pageSize = 10 } = req.query;
+        keyword = keyword.trim();
+        page = Number(page) || 1;
+        pageSize = Math.min(Number(pageSize) || 10, 20); // 最大20条
+        if (!keyword || keyword.length < 2) {
+            return res.json({
+                code: 0,
+                data: [],
+                message: 'success'
+            });
+        }
+        const offset = (page - 1) * pageSize;
+        const sql = `
+      SELECT w.id, w.writer_id, w.name, w.phone_1,
+             CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END as is_activated
+      FROM writer_info w
+      LEFT JOIN users u ON w.writer_id = u.username
+      WHERE w.name LIKE ? OR w.writer_id LIKE ?
+      ORDER BY w.created_time DESC
+      LIMIT ? OFFSET ?
+    `;
+        const params = [`%${keyword}%`, `%${keyword}%`, pageSize, offset];
+        const [rows] = await db_1.default.query(sql, params);
+        res.json({
+            code: 0,
+            data: rows,
+            message: 'success'
+        });
+    }
+    catch (err) {
+        console.error('Quick search writer error:', err);
+        res.status(500).json({
+            code: 1,
+            message: '服务器错误'
+        });
+    }
+};
+exports.getWriterQuickSearch = getWriterQuickSearch;
