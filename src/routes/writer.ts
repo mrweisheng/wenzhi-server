@@ -8,7 +8,8 @@ import {
   deleteWriter,
   batchDeleteWriters,
   getWriterList,
-  openCreateWriter
+  openCreateWriter,
+  getWriterQuickSearch
 } from '../controllers/writer'
 import {
   rateWriter,
@@ -50,5 +51,8 @@ router.get('/:writerId/rating-by-date', auth, getWriterRatingByDate)
 
 // 新增：开放注册写手（无token限制，带IP限流）
 router.post('/open', writerOpenLimiter, openCreateWriter)
+
+// 快速模糊搜索写手（无token限制，适合前端实时搜索）
+router.get('/search', getWriterQuickSearch)
 
 export default router 
