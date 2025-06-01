@@ -29,7 +29,7 @@ router.get('/', auth, getWriters)
 router.get('/list', auth, getWriterList)
 
 // 快速模糊搜索写手（无token限制，适合前端实时搜索）
-router.get('/search', getWriterQuickSearch)
+router.get('/quick-search', getWriterQuickSearch)
 
 // 获取写手详情
 router.get('/:id', auth, getWriterById)
