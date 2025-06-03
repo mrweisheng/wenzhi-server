@@ -72,6 +72,7 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
     // 检查写手是否存在（如果有填写）
     if (writer_id) {
       let writerIdToUse = writer_id;
+      console.log('前端传入writer_id:', writer_id);
       // 如果传的是纯数字，自动查业务编号
       if (/^\d+$/.test(writer_id)) {
         const [writer]: any = await pool.query(
@@ -82,11 +83,13 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
           writerIdToUse = writer[0].writer_id;
         }
       }
+      console.log('最终用于校验的writerIdToUse:', writerIdToUse);
       // 校验业务编号是否存在
       const [writerCheck]: any = await pool.query(
         'SELECT writer_id FROM writer_info WHERE writer_id = ?',
         [writerIdToUse]
       );
+      console.log('writerCheck结果:', writerCheck);
       if (!writerCheck || writerCheck.length === 0) {
         return res.status(400).json({
           code: 1,

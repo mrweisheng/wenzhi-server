@@ -42,13 +42,27 @@ const createCustomerOrder = async (req, res) => {
         }
         // 检查写手是否存在（如果有填写）
         if (writer_id) {
-            const [writer] = await db_1.default.query('SELECT id FROM writer_info WHERE id = ?', [writer_id]);
-            if (writer.length === 0) {
+            let writerIdToUse = writer_id;
+            console.log('前端传入writer_id:', writer_id);
+            // 如果传的是纯数字，自动查业务编号
+            if (/^\d+$/.test(writer_id)) {
+                const [writer] = await db_1.default.query('SELECT writer_id FROM writer_info WHERE id = ?', [writer_id]);
+                if (writer.length > 0) {
+                    writerIdToUse = writer[0].writer_id;
+                }
+            }
+            console.log('最终用于校验的writerIdToUse:', writerIdToUse);
+            // 校验业务编号是否存在
+            const [writerCheck] = await db_1.default.query('SELECT writer_id FROM writer_info WHERE writer_id = ?', [writerIdToUse]);
+            console.log('writerCheck结果:', writerCheck);
+            if (!writerCheck || writerCheck.length === 0) {
                 return res.status(400).json({
                     code: 1,
                     message: '指定的写手不存在'
                 });
             }
+            // 用业务编号替换
+            req.body.writer_id = writerIdToUse;
         }
         // 创建订单，自动设置客服ID为当前用户ID
         const [result] = await db_1.default.query('INSERT INTO customer_orders SET ?', {
@@ -59,7 +73,7 @@ const createCustomerOrder = async (req, res) => {
             word_count,
             fee,
             customer_id: userId, // 强制设置为当前登录的客服ID
-            writer_id: writer_id || null,
+            writer_id: req.body.writer_id || null, // 这里writer_id必须是业务编号
             exchange_time,
             payment_channel,
             store_name,
@@ -75,8 +89,8 @@ const createCustomerOrder = async (req, res) => {
         // 如果在系统订单表中找到匹配的订单，则更新该订单的客服和写手信息
         if (systemOrder.length > 0) {
             // 只同步 customer_id，writer_id 有值才同步
-            if (writer_id) {
-                await db_1.default.query('UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?', [userId, writer_id, order_id]);
+            if (req.body.writer_id) {
+                await db_1.default.query('UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?', [userId, req.body.writer_id, order_id]);
             }
             else {
                 await db_1.default.query('UPDATE orders SET customer_id = ? WHERE order_id = ?', [userId, order_id]);
@@ -116,10 +130,11 @@ const getCustomerOrders = async (req, res) => {
         let sql = `
       SELECT co.*, 
              u.username as customer_service_name, 
-             w.name as writer_name 
+             w.name as writer_name, 
+             w.writer_id as writer_biz_id
       FROM customer_orders co
       LEFT JOIN users u ON co.customer_id = u.id
-      LEFT JOIN writer_info w ON co.writer_id = w.id
+      LEFT JOIN writer_info w ON co.writer_id = w.writer_id
       WHERE 1=1
     `;
         const params = [];
@@ -160,11 +175,21 @@ const getCustomerOrders = async (req, res) => {
         sql += ' ORDER BY co.date DESC, co.id DESC LIMIT ? OFFSET ?';
         params.push(Number(pageSize), (Number(page) - 1) * Number(pageSize));
         const [rows] = await db_1.default.query(sql, params);
+        // 替换writer_id为业务编号
+        const resultRows = Array.isArray(rows)
+            ? rows.map((row) => {
+                const { writer_biz_id, ...rest } = row;
+                return {
+                    ...rest,
+                    writer_id: writer_biz_id || null
+                };
+            })
+            : [];
         res.json({
             code: 0,
             data: {
                 total,
-                list: rows
+                list: resultRows
             },
             message: "获取成功"
         });
@@ -183,9 +208,12 @@ const getCustomerOrderById = async (req, res) => {
     try {
         const { id } = req.params;
         const [ordersResult] = await db_1.default.query(`SELECT co.*, 
-        CONCAT(u.first_name, ' ', u.last_name) as customer_service_name
+        CONCAT(u.first_name, ' ', u.last_name) as customer_service_name,
+        w.name as writer_name,
+        w.writer_id as writer_biz_id
       FROM customer_orders co
       LEFT JOIN users u ON co.customer_id = u.id
+      LEFT JOIN writer_info w ON co.writer_id = w.writer_id
       WHERE co.id = ?`, [id]);
         const orders = Array.isArray(ordersResult) ? ordersResult : [];
         if (orders.length === 0) {
@@ -194,9 +222,12 @@ const getCustomerOrderById = async (req, res) => {
                 message: '订单不存在'
             });
         }
+        // 替换writer_id为业务编号
+        const { writer_biz_id, ...rest } = orders[0];
+        const order = { ...rest, writer_id: writer_biz_id || null };
         res.json({
             code: 0,
-            data: orders[0]
+            data: order
         });
     }
     catch (error) {
@@ -235,8 +266,16 @@ const updateCustomerOrder = async (req, res) => {
         }
         // 检查写手是否存在（如果有填写）
         if (updateData.writer_id) {
-            const [writer] = await db_1.default.query('SELECT id FROM writer_info WHERE id = ?', [updateData.writer_id]);
-            if (!writer || writer.length === 0) {
+            // 如果传的是纯数字，自动查业务编号
+            if (/^\d+$/.test(updateData.writer_id)) {
+                const [writer] = await db_1.default.query('SELECT writer_id FROM writer_info WHERE id = ?', [updateData.writer_id]);
+                if (writer.length > 0) {
+                    updateData.writer_id = writer[0].writer_id;
+                }
+            }
+            // 校验业务编号是否存在
+            const [writerCheck] = await db_1.default.query('SELECT writer_id FROM writer_info WHERE writer_id = ?', [updateData.writer_id]);
+            if (!writerCheck || writerCheck.length === 0) {
                 return res.status(400).json({
                     code: 1,
                     message: '指定的写手不存在'
@@ -299,9 +338,10 @@ const mergeCustomerOrder = async (req, res) => {
         }
         // 查找所有符合条件的订单进行合并
         // 条件：客服订单表中有记录，且订单总表中也有相同订单号的记录
-        const [orderPairs] = await db_1.default.query(`SELECT co.order_id, co.customer_id, co.writer_id
+        const [orderPairs] = await db_1.default.query(`SELECT co.order_id, co.customer_id, co.writer_id, w.writer_id as writer_biz_id
        FROM customer_orders co
        INNER JOIN orders o ON co.order_id = o.order_id
+       LEFT JOIN writer_info w ON co.writer_id = w.writer_id
        WHERE (o.customer_id IS NULL OR o.writer_id IS NULL)` // 订单总表中客服ID或写手ID至少有一个为空
         );
         if (orderPairs.length === 0) {
@@ -323,7 +363,7 @@ const mergeCustomerOrder = async (req, res) => {
             mergedOrders.push({
                 order_id: order.order_id,
                 customer_id: order.customer_id,
-                writer_id: order.writer_id || null
+                writer_id: order.writer_biz_id || null
             });
         }
         res.json({
