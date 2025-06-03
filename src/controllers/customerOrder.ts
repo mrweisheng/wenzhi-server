@@ -71,16 +71,30 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
 
     // 检查写手是否存在（如果有填写）
     if (writer_id) {
-      const [writer]: any = await pool.query(
-        'SELECT id FROM writer_info WHERE id = ?',
-        [writer_id]
+      let writerIdToUse = writer_id;
+      // 如果传的是纯数字，自动查业务编号
+      if (/^\d+$/.test(writer_id)) {
+        const [writer]: any = await pool.query(
+          'SELECT writer_id FROM writer_info WHERE id = ?',
+          [writer_id]
+        );
+        if (writer.length > 0) {
+          writerIdToUse = writer[0].writer_id;
+        }
+      }
+      // 校验业务编号是否存在
+      const [writerCheck]: any = await pool.query(
+        'SELECT writer_id FROM writer_info WHERE writer_id = ?',
+        [writerIdToUse]
       );
-      if (writer.length === 0) {
+      if (!writerCheck || writerCheck.length === 0) {
         return res.status(400).json({
           code: 1,
           message: '指定的写手不存在'
         });
       }
+      // 用业务编号替换
+      req.body.writer_id = writerIdToUse;
     }
 
     // 创建订单，自动设置客服ID为当前用户ID
@@ -94,7 +108,7 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
         word_count,
         fee,
         customer_id: userId, // 强制设置为当前登录的客服ID
-        writer_id: writer_id || null,
+        writer_id: req.body.writer_id || null, // 这里writer_id必须是业务编号
         exchange_time,
         payment_channel,
         store_name,
@@ -116,10 +130,10 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
     // 如果在系统订单表中找到匹配的订单，则更新该订单的客服和写手信息
     if (systemOrder.length > 0) {
       // 只同步 customer_id，writer_id 有值才同步
-      if (writer_id) {
+      if (req.body.writer_id) {
         await pool.query(
           'UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?',
-          [userId, writer_id, order_id]
+          [userId, req.body.writer_id, order_id]
         );
       } else {
         await pool.query(
@@ -182,7 +196,7 @@ export const getCustomerOrders = async (req: Request, res: Response) => {
              w.writer_id as writer_biz_id
       FROM customer_orders co
       LEFT JOIN users u ON co.customer_id = u.id
-      LEFT JOIN writer_info w ON co.writer_id = w.id
+      LEFT JOIN writer_info w ON co.writer_id = w.writer_id
       WHERE 1=1
     `;
     const params: any[] = [];
@@ -271,7 +285,7 @@ export const getCustomerOrderById = async (req: Request, res: Response) => {
         w.writer_id as writer_biz_id
       FROM customer_orders co
       LEFT JOIN users u ON co.customer_id = u.id
-      LEFT JOIN writer_info w ON co.writer_id = w.id
+      LEFT JOIN writer_info w ON co.writer_id = w.writer_id
       WHERE co.id = ?`,
       [id]
     )
@@ -338,12 +352,22 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
 
     // 检查写手是否存在（如果有填写）
     if (updateData.writer_id) {
-      const [writer]: any = await pool.query(
-        'SELECT id FROM writer_info WHERE id = ?',
+      // 如果传的是纯数字，自动查业务编号
+      if (/^\d+$/.test(updateData.writer_id)) {
+        const [writer]: any = await pool.query(
+          'SELECT writer_id FROM writer_info WHERE id = ?',
+          [updateData.writer_id]
+        );
+        if (writer.length > 0) {
+          updateData.writer_id = writer[0].writer_id;
+        }
+      }
+      // 校验业务编号是否存在
+      const [writerCheck]: any = await pool.query(
+        'SELECT writer_id FROM writer_info WHERE writer_id = ?',
         [updateData.writer_id]
-      )
-
-      if (!writer || writer.length === 0) {
+      );
+      if (!writerCheck || writerCheck.length === 0) {
         return res.status(400).json({
           code: 1,
           message: '指定的写手不存在'
@@ -424,7 +448,7 @@ export const mergeCustomerOrder = async (req: Request, res: Response) => {
       `SELECT co.order_id, co.customer_id, co.writer_id, w.writer_id as writer_biz_id
        FROM customer_orders co
        INNER JOIN orders o ON co.order_id = o.order_id
-       LEFT JOIN writer_info w ON co.writer_id = w.id
+       LEFT JOIN writer_info w ON co.writer_id = w.writer_id
        WHERE (o.customer_id IS NULL OR o.writer_id IS NULL)` // 订单总表中客服ID或写手ID至少有一个为空
     )
 
