@@ -446,11 +446,11 @@ export const getWriterQuickSearch = async (req: Request, res: Response) => {
              CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END as is_activated
       FROM writer_info w
       LEFT JOIN users u ON w.writer_id = u.username
-      WHERE w.name LIKE ? OR w.writer_id LIKE ?
+      WHERE w.writer_id LIKE ?
       ORDER BY w.created_time DESC
       LIMIT ? OFFSET ?
     `;
-    const params = [`%${keyword}%`, `%${keyword}%`, pageSize, offset];
+    const params = [`%${keyword}%`, pageSize, offset];
     const [rows] = await pool.query(sql, params);
     res.json({
       code: 0,

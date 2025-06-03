@@ -595,9 +595,9 @@ GET /api/writers/list
 
 ### 8. 快速模糊搜索写手
 GET /api/writers/quick-search
-描述: 根据姓名或写手编号进行模糊搜索，适合前端输入框实时搜索，无需登录
+描述: 根据写手编号进行模糊搜索，适合前端输入框实时搜索，无需登录
 请求参数:
-  - keyword: 搜索关键字(必填，支持姓名或编号，至少2个字符)
+  - keyword: 搜索关键字(必填，仅支持写手编号，至少2个字符)
   - page: 页码(可选，默认1)
   - pageSize: 每页条数(可选，默认10，最大20)
 响应:
@@ -615,7 +615,7 @@ GET /api/writers/quick-search
     message: "success"
   }
 说明:
-- 支持 name 和 writer_id 的模糊搜索。
+- 仅支持 writer_id（写手编号）的模糊搜索。
 - 返回结果最多20条，适合前端实时输入搜索。
 - keyword 长度不足2时返回空数组。
 - 无需登录。
