@@ -371,10 +371,8 @@ const getWriterQuickSearch = async (req, res) => {
         }
         const offset = (page - 1) * pageSize;
         const sql = `
-      SELECT w.id, w.writer_id, w.name, w.phone_1,
-             CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END as is_activated
+      SELECT w.id, w.writer_id, w.name, w.phone_1
       FROM writer_info w
-      LEFT JOIN users u ON w.writer_id = u.username
       WHERE w.writer_id LIKE ?
       ORDER BY w.created_time DESC
       LIMIT ? OFFSET ?
