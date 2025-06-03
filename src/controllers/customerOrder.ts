@@ -178,7 +178,8 @@ export const getCustomerOrders = async (req: Request, res: Response) => {
     let sql = `
       SELECT co.*, 
              u.username as customer_service_name, 
-             w.name as writer_name 
+             w.name as writer_name, 
+             w.writer_id as writer_biz_id
       FROM customer_orders co
       LEFT JOIN users u ON co.customer_id = u.id
       LEFT JOIN writer_info w ON co.writer_id = w.id
@@ -231,11 +232,21 @@ export const getCustomerOrders = async (req: Request, res: Response) => {
 
     const [rows] = await pool.query(sql, params);
 
+    // 替换writer_id为业务编号
+    const resultRows = Array.isArray(rows)
+      ? rows.map((row: any) => {
+          const { writer_biz_id, ...rest } = row;
+          return {
+            ...rest,
+            writer_id: writer_biz_id || null
+          };
+        })
+      : [];
     res.json({
       code: 0,
       data: {
         total,
-        list: rows
+        list: resultRows
       },
       message: "获取成功"
     });
@@ -255,9 +266,12 @@ export const getCustomerOrderById = async (req: Request, res: Response) => {
 
     const [ordersResult]: any = await pool.query(
       `SELECT co.*, 
-        CONCAT(u.first_name, ' ', u.last_name) as customer_service_name
+        CONCAT(u.first_name, ' ', u.last_name) as customer_service_name,
+        w.name as writer_name,
+        w.writer_id as writer_biz_id
       FROM customer_orders co
       LEFT JOIN users u ON co.customer_id = u.id
+      LEFT JOIN writer_info w ON co.writer_id = w.id
       WHERE co.id = ?`,
       [id]
     )
@@ -271,9 +285,12 @@ export const getCustomerOrderById = async (req: Request, res: Response) => {
       })
     }
 
+    // 替换writer_id为业务编号
+    const { writer_biz_id, ...rest } = orders[0];
+    const order = { ...rest, writer_id: writer_biz_id || null };
     res.json({
       code: 0,
-      data: orders[0]
+      data: order
     })
   } catch (error) {
     console.error('Get customer order error:', error)
@@ -404,9 +421,10 @@ export const mergeCustomerOrder = async (req: Request, res: Response) => {
     // 查找所有符合条件的订单进行合并
     // 条件：客服订单表中有记录，且订单总表中也有相同订单号的记录
     const [orderPairs]: any = await pool.query(
-      `SELECT co.order_id, co.customer_id, co.writer_id
+      `SELECT co.order_id, co.customer_id, co.writer_id, w.writer_id as writer_biz_id
        FROM customer_orders co
        INNER JOIN orders o ON co.order_id = o.order_id
+       LEFT JOIN writer_info w ON co.writer_id = w.id
        WHERE (o.customer_id IS NULL OR o.writer_id IS NULL)` // 订单总表中客服ID或写手ID至少有一个为空
     )
 
@@ -435,7 +453,7 @@ export const mergeCustomerOrder = async (req: Request, res: Response) => {
       mergedOrders.push({
         order_id: order.order_id,
         customer_id: order.customer_id,
-        writer_id: order.writer_id || null
+        writer_id: order.writer_biz_id || null
       })
     }
 
