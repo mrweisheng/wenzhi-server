@@ -187,9 +187,24 @@ export const getCustomerOrders = async (req: Request, res: Response) => {
        WHERE u.id = ?`,
       [userId]
     );
+    const roleName = userRole[0]?.role_name || '';
+
+    // 写手角色处理
+    let myWriterId: string | null = null;
+    if (roleName === '写手') {
+      const [writer]: any = await pool.query(
+        'SELECT writer_id FROM writer_info WHERE user_id = ?',
+        [userId]
+      );
+      if (!writer.length) {
+        // 没有写手信息，返回空
+        return res.json({ code: 0, data: { total: 0, list: [] }, message: "获取成功" });
+      }
+      myWriterId = writer[0].writer_id;
+    }
 
     // 判断用户是否是客服角色
-    const isCustomerService = userRole.length > 0 && userRole[0].role_name.includes('客服');
+    const isCustomerService = roleName.includes('客服');
 
     // 构建查询条件
     let sql = `
@@ -204,8 +219,12 @@ export const getCustomerOrders = async (req: Request, res: Response) => {
     `;
     const params: any[] = [];
 
-    // 如果是客服角色，只查询自己的订单
-    if (isCustomerService) {
+    // 如果是写手角色，只能查自己相关订单
+    if (roleName === '写手') {
+      sql += ' AND co.writer_id = ?';
+      params.push(myWriterId);
+    } else if (isCustomerService) {
+      // 如果是客服角色，只查询自己的订单
       sql += ' AND co.customer_id = ?';
       params.push(userId);
     }
