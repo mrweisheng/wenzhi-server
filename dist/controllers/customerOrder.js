@@ -124,8 +124,19 @@ const getCustomerOrders = async (req, res) => {
        FROM users u 
        INNER JOIN roles r ON u.role_id = r.id 
        WHERE u.id = ?`, [userId]);
+        const roleName = userRole[0]?.role_name || '';
+        // 写手角色处理
+        let myWriterId = null;
+        if (roleName === '写手') {
+            const [writer] = await db_1.default.query('SELECT writer_id FROM writer_info WHERE user_id = ?', [userId]);
+            if (!writer.length) {
+                // 没有写手信息，返回空
+                return res.json({ code: 0, data: { total: 0, list: [] }, message: "获取成功" });
+            }
+            myWriterId = writer[0].writer_id;
+        }
         // 判断用户是否是客服角色
-        const isCustomerService = userRole.length > 0 && userRole[0].role_name.includes('客服');
+        const isCustomerService = roleName.includes('客服');
         // 构建查询条件
         let sql = `
       SELECT co.*, 
@@ -138,8 +149,13 @@ const getCustomerOrders = async (req, res) => {
       WHERE 1=1
     `;
         const params = [];
-        // 如果是客服角色，只查询自己的订单
-        if (isCustomerService) {
+        // 如果是写手角色，只能查自己相关订单
+        if (roleName === '写手') {
+            sql += ' AND co.writer_id = ?';
+            params.push(myWriterId);
+        }
+        else if (isCustomerService) {
+            // 如果是客服角色，只查询自己的订单
             sql += ' AND co.customer_id = ?';
             params.push(userId);
         }
@@ -176,13 +192,21 @@ const getCustomerOrders = async (req, res) => {
         params.push(Number(pageSize), (Number(page) - 1) * Number(pageSize));
         const [rows] = await db_1.default.query(sql, params);
         // 替换writer_id为业务编号
-        const resultRows = Array.isArray(rows)
+        let resultRows = Array.isArray(rows)
             ? rows.map((row) => {
                 const { writer_biz_id, ...rest } = row;
-                return {
+                let result = {
                     ...rest,
                     writer_id: writer_biz_id || null
                 };
+                // 写手角色过滤部分字段
+                if (roleName === '写手') {
+                    delete result.order_id;
+                    delete result.payment_channel;
+                    delete result.store_name;
+                    delete result.customer_name;
+                }
+                return result;
             })
             : [];
         res.json({

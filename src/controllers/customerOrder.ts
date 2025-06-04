@@ -269,13 +269,21 @@ export const getCustomerOrders = async (req: Request, res: Response) => {
     const [rows] = await pool.query(sql, params);
 
     // 替换writer_id为业务编号
-    const resultRows = Array.isArray(rows)
+    let resultRows = Array.isArray(rows)
       ? rows.map((row: any) => {
           const { writer_biz_id, ...rest } = row;
-          return {
+          let result = {
             ...rest,
             writer_id: writer_biz_id || null
           };
+          // 写手角色过滤部分字段
+          if (roleName === '写手') {
+            delete result.order_id;
+            delete result.payment_channel;
+            delete result.store_name;
+            delete result.customer_name;
+          }
+          return result;
         })
       : [];
     res.json({
