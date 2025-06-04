@@ -11,11 +11,31 @@
  Target Server Version : 80041 (8.0.41-0ubuntu0.20.04.1)
  File Encoding         : 65001
 
- Date: 29/03/2025 14:46:29
+ Date: 04/06/2025 21:45:29
 */
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
+
+-- ----------------------------
+-- Table structure for cases
+-- ----------------------------
+DROP TABLE IF EXISTS `cases`;
+CREATE TABLE `cases`  (
+  `id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '案例ID，格式为CASE-001',
+  `case_type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '案例类型',
+  `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '案例标题',
+  `content` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '内容正文',
+  `images` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL COMMENT '图片URL数组，JSON格式',
+  `creator_id` int NOT NULL COMMENT '创建人ID',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  INDEX `idx_case_type`(`case_type` ASC) USING BTREE,
+  INDEX `idx_creator`(`creator_id` ASC) USING BTREE,
+  INDEX `idx_created_at`(`created_at` ASC) USING BTREE,
+  CONSTRAINT `fk_case_creator` FOREIGN KEY (`creator_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '案例管理表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for customer_orders
@@ -24,13 +44,14 @@ DROP TABLE IF EXISTS `customer_orders`;
 CREATE TABLE `customer_orders`  (
   `id` int NOT NULL AUTO_INCREMENT,
   `order_id` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '订单编号',
+  `dispatch_id` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '派单编号',
   `date` date NOT NULL COMMENT '日期',
   `is_fixed` tinyint(1) NOT NULL DEFAULT 0 COMMENT '是否定稿',
   `order_content` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL COMMENT '稿件内容信息',
   `word_count` int NULL DEFAULT NULL COMMENT '稿件字数(只填写数字)',
   `fee` decimal(10, 2) NULL DEFAULT NULL COMMENT '稿费',
   `customer_id` int NULL DEFAULT NULL COMMENT '客服ID',
-  `writer_id` int NULL DEFAULT NULL COMMENT '写手ID',
+  `writer_id` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
   `exchange_time` datetime NULL DEFAULT NULL COMMENT '交稿时间',
   `payment_channel` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '付款渠道',
   `store_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '店铺名或客户线下',
@@ -43,12 +64,12 @@ CREATE TABLE `customer_orders`  (
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `idx_order_id`(`order_id` ASC) USING BTREE,
+  UNIQUE INDEX `idx_dispatch_id`(`dispatch_id` ASC) USING BTREE,
   INDEX `idx_date`(`date` ASC) USING BTREE,
   INDEX `idx_customer_id`(`customer_id` ASC) USING BTREE,
   INDEX `idx_writer_id`(`writer_id` ASC) USING BTREE,
-  CONSTRAINT `fk_customer_order_customer` FOREIGN KEY (`customer_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `fk_customer_order_writer` FOREIGN KEY (`writer_id`) REFERENCES `writer_info` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 4 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客服填报订单表' ROW_FORMAT = Dynamic;
+  CONSTRAINT `fk_customer_order_customer` FOREIGN KEY (`customer_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE = InnoDB AUTO_INCREMENT = 84 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客服填报订单表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for issue_records
@@ -109,7 +130,7 @@ CREATE TABLE `menus`  (
   PRIMARY KEY (`id`) USING BTREE,
   INDEX `parent_id`(`parent_id` ASC) USING BTREE,
   CONSTRAINT `menus_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `menus` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 26 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '菜单表' ROW_FORMAT = DYNAMIC;
+) ENGINE = InnoDB AUTO_INCREMENT = 27 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '菜单表' ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for orders
@@ -175,7 +196,7 @@ CREATE TABLE `roles`  (
 DROP TABLE IF EXISTS `users`;
 CREATE TABLE `users`  (
   `id` int NOT NULL AUTO_INCREMENT,
-  `username` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `username` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
   `password` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `role_id` int NULL DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
@@ -190,7 +211,7 @@ CREATE TABLE `users`  (
   UNIQUE INDEX `username`(`username` ASC) USING BTREE,
   INDEX `role_id`(`role_id` ASC) USING BTREE,
   CONSTRAINT `users_ibfk_1` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 16 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
+) ENGINE = InnoDB AUTO_INCREMENT = 68 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for writer_info
@@ -199,7 +220,7 @@ DROP TABLE IF EXISTS `writer_info`;
 CREATE TABLE `writer_info`  (
   `id` int NOT NULL AUTO_INCREMENT,
   `writer_group` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,
-  `writer_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `writer_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `form_date` date NULL DEFAULT NULL,
   `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,
   `education` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,
@@ -220,50 +241,32 @@ CREATE TABLE `writer_info`  (
   `time_taken_seconds` int NULL DEFAULT NULL,
   `starred` tinyint(1) NULL DEFAULT NULL,
   `processed` tinyint(1) NULL DEFAULT NULL,
+  `apply_date` date NULL DEFAULT NULL COMMENT '申请日期',
   PRIMARY KEY (`id`, `writer_id`) USING BTREE,
-  INDEX `id`(`id` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 191 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
+  INDEX `id`(`id` ASC) USING BTREE,
+  INDEX `idx_name`(`name` ASC) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 83916 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for writer_ratings
 -- ----------------------------
 DROP TABLE IF EXISTS `writer_ratings`;
-CREATE TABLE `writer_ratings` (
+CREATE TABLE `writer_ratings`  (
   `id` int NOT NULL AUTO_INCREMENT,
   `writer_id` int NOT NULL COMMENT '关联writer_info表的id',
-  `score` decimal(3,1) NOT NULL COMMENT '评分(1-10分)',
+  `score` decimal(3, 1) NOT NULL COMMENT '评分(1-10分)',
   `comment` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '评价内容(必填)',
   `quality_inspector_id` int NOT NULL COMMENT '质检员ID',
   `rating_date` date NOT NULL COMMENT '评分日期',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `idx_writer_date` (`writer_id`, `rating_date`),
-  KEY `idx_writer_id` (`writer_id`),
-  KEY `idx_created_at` (`created_at`),
-  KEY `idx_quality_inspector_id` (`quality_inspector_id`),
-  CONSTRAINT `fk_rating_writer` FOREIGN KEY (`writer_id`) REFERENCES `writer_info` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_rating_inspector` FOREIGN KEY (`quality_inspector_id`) REFERENCES `users` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='写手评分表';
-
--- ----------------------------
--- Table structure for cases
--- ----------------------------
-DROP TABLE IF EXISTS `cases`;
-CREATE TABLE `cases` (
-  `id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '案例ID，格式为CASE-001',
-  `case_type` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '案例类型',
-  `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '案例标题',
-  `content` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '内容正文',
-  `images` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL COMMENT '图片URL数组，JSON格式',
-  `creator_id` int NOT NULL COMMENT '创建人ID',
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`) USING BTREE,
-  INDEX `idx_case_type`(`case_type` ASC) USING BTREE,
-  INDEX `idx_creator`(`creator_id` ASC) USING BTREE,
+  UNIQUE INDEX `idx_writer_date`(`writer_id` ASC, `rating_date` ASC) USING BTREE,
+  INDEX `idx_writer_id`(`writer_id` ASC) USING BTREE,
   INDEX `idx_created_at`(`created_at` ASC) USING BTREE,
-  CONSTRAINT `fk_case_creator` FOREIGN KEY (`creator_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='案例管理表';
+  INDEX `idx_quality_inspector_id`(`quality_inspector_id` ASC) USING BTREE,
+  CONSTRAINT `fk_rating_inspector` FOREIGN KEY (`quality_inspector_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `fk_rating_writer` FOREIGN KEY (`writer_id`) REFERENCES `writer_info` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT
+) ENGINE = InnoDB AUTO_INCREMENT = 3 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '写手评分表' ROW_FORMAT = Dynamic;
 
 SET FOREIGN_KEY_CHECKS = 1;

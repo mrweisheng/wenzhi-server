@@ -128,12 +128,12 @@ const getCustomerOrders = async (req, res) => {
         // 写手角色处理
         let myWriterId = null;
         if (roleName === '写手') {
-            const [writer] = await db_1.default.query('SELECT writer_id FROM writer_info WHERE user_id = ?', [userId]);
-            if (!writer.length) {
-                // 没有写手信息，返回空
+            // 直接用username作为writer_id
+            const [userInfo] = await db_1.default.query('SELECT username FROM users WHERE id = ?', [userId]);
+            if (!userInfo.length || !userInfo[0].username) {
                 return res.json({ code: 0, data: { total: 0, list: [] }, message: "获取成功" });
             }
-            myWriterId = writer[0].writer_id;
+            myWriterId = userInfo[0].username;
         }
         // 判断用户是否是客服角色
         const isCustomerService = roleName.includes('客服');

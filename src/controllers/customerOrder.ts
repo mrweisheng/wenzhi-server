@@ -192,15 +192,15 @@ export const getCustomerOrders = async (req: Request, res: Response) => {
     // 写手角色处理
     let myWriterId: string | null = null;
     if (roleName === '写手') {
-      const [writer]: any = await pool.query(
-        'SELECT writer_id FROM writer_info WHERE user_id = ?',
+      // 直接用username作为writer_id
+      const [userInfo]: any = await pool.query(
+        'SELECT username FROM users WHERE id = ?',
         [userId]
       );
-      if (!writer.length) {
-        // 没有写手信息，返回空
+      if (!userInfo.length || !userInfo[0].username) {
         return res.json({ code: 0, data: { total: 0, list: [] }, message: "获取成功" });
       }
-      myWriterId = writer[0].writer_id;
+      myWriterId = userInfo[0].username;
     }
 
     // 判断用户是否是客服角色
