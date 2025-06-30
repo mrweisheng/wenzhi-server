@@ -700,10 +700,16 @@ GET /api/orders
   - pageSize: 每页条数(默认10)
   - order_id: 订单编号(可选,精确匹配)
   - payment_id: 支付单号(可选,精确匹配)
-  - status: 订单状态(可选)
+  - status: 订单状态筛选(可选，1-筛选包含"成功"的订单，2-筛选不包含"成功"或为空的订单)
   - channel: 支付渠道(可选,支付宝/企业微信)
   - startTime: 开始时间(可选,订单创建时间范围)
   - endTime: 结束时间(可选,订单创建时间范围)
+
+筛选逻辑:
+  - status=1：只返回status字段中包含"成功"的订单（模糊匹配，如"支付成功"、"交易成功"等）
+  - status=2：只返回status字段中不包含"成功"或为空的订单
+  - 不传status或传其他值：返回全部订单
+
 响应:
   {
     code: 0,
@@ -723,7 +729,13 @@ GET /api/orders
           confirm_time: 确认收货时间,
           merchant_payment: 打款商家金额,
           created_at: 记录创建时间,
-          updated_at: 记录更新时间
+          updated_at: 记录更新时间,
+          customer_id: 客服ID,
+          customer_name: 客服用户名,
+          writer_id: 第一个写手ID,
+          writer_name: 第一个写手姓名,
+          writer_id_2: 第二个写手ID,
+          writer_name_2: 第二个写手姓名
         }
       ]
     },
@@ -754,17 +766,244 @@ PUT /api/orders/:orderId/writer
 请求头:
   - Authorization: Bearer <token>
 请求参数:
-  - writer_id: 写手ID(必填)
+  - writer_id: 第一个写手ID(可选)
+  - writer_id_2: 第二个写手ID(可选)
 响应:
   {
     code: 0,
     message: "success",
     data: {
       order_id: 订单编号,
-      writer_id: 写手ID,
-      writer: 写手姓名
+      writer_id: 第一个写手ID,
+      writer_id_2: 第二个写手ID
     }
   }
+错误响应:
+  {
+    code: 1,
+    message: "指定的写手不存在"
+  }
+或
+  {
+    code: 1,
+    message: "指定的第二个写手不存在"
+  }
+  或
+  {
+    code: 1,
+    message: "订单不存在"
+  }
+  或
+  {
+    code: 1,
+    message: "您没有权限执行此操作"
+  }
+
+### 4. 删除客服订单
+DELETE /api/customer-orders/:id
+描述: 删除客服订单
+请求头:
+  - Authorization: Bearer <token>
+响应:
+  {
+    code: 0,
+    message: "删除成功"
+  }
+错误响应:
+  {
+    code: 1,
+    message: "订单不存在"
+  }
+  或
+  {
+    code: 1,
+    message: "订单已被锁定，仅限超级管理员和财务角色可以删除"
+  }
+  或
+  {
+    code: 1,
+    message: "您没有权限执行此操作"
+  }
+
+### 5. 手动合并客服订单到订单总表
+POST /api/customer-orders/merge
+描述: 手动触发将客服订单表中的客服ID和写手ID信息批量更新到订单总表中，处理所有符合条件的订单
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  无需参数，系统会自动处理所有符合条件的订单
+合并逻辑说明:
+  - 系统会查找所有 orders.customer_id 或 writer_id 为空的订单，批量用 customer_orders 的 customer_id、writer_id 进行同步。
+  - customer_id 一定同步，writer_id 仅在有值时同步（优先同步第一个写手）。
+  - 注意：订单总表(orders)现在支持两个写手，会同步第一个写手(writer_id)和第二个写手(writer_id_2)到订单总表。
+  - 同时会同步写手佣金信息：第一个写手佣金(writer_fee)和第二个写手佣金(writer_fee_2)。
+  - 支持增量更新：如果订单总表中缺少佣金信息，会自动从客服订单表同步。
+  - 同步fee_per_1000字段：如果客服订单表有值，则同步到订单总表。
+响应:
+  {
+    code: 0,
+    message: "合并成功",
+    data: {
+      total: 处理订单总数,
+      merged_orders: [
+        {
+          order_id: 订单编号,
+          customer_id: 客服ID,
+          writer_id: 第一个写手ID,
+          writer_id_2: 第二个写手ID
+        }
+      ]
+    }
+  }
+错误响应:
+  {
+    code: 1,
+    message: "没有符合条件的订单需要合并"
+  }
+
+### 6. 锁定客服订单
+POST /api/customer-orders/lock
+描述: 锁定客服订单，锁定后的订单只能由超级管理员和财务角色修改
+权限: 仅限超级管理员和财务角色
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - order_ids: 订单ID数组(必填)
+请求体示例:
+  {
+    "order_ids": [1, 2, 3]
+  }
+响应:
+  {
+    code: 0,
+    message: "锁定成功",
+    data: {
+      locked_count: 锁定订单数量,
+      locked_orders: [
+        {
+          id: 订单ID,
+          order_id: 订单编号
+        }
+      ]
+    }
+  }
+错误响应:
+  {
+    code: 1,
+    message: "请提供要锁定的订单ID列表"
+  }
+或
+  {
+    code: 1,
+    message: "部分订单不存在"
+  }
+或
+  {
+    code: 1,
+    message: "以下订单已被锁定，无法重复锁定: 订单编号列表"
+  }
+或
+  {
+    code: 1,
+    message: "您没有权限执行此操作，仅限超级管理员和财务角色"
+  }
+
+### 7. 解锁客服订单
+POST /api/customer-orders/unlock
+描述: 解锁客服订单，解锁后恢复正常编辑权限
+权限: 仅限超级管理员和财务角色
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - order_ids: 订单ID数组(必填)
+请求体示例:
+  {
+    "order_ids": [1, 2, 3]
+  }
+响应:
+  {
+    code: 0,
+    message: "解锁成功",
+    data: {
+      unlocked_count: 解锁订单数量,
+      unlocked_orders: [
+        {
+          id: 订单ID,
+          order_id: 订单编号
+        }
+      ]
+    }
+  }
+错误响应:
+  {
+    code: 1,
+    message: "请提供要解锁的订单ID列表"
+  }
+或
+  {
+    code: 1,
+    message: "部分订单不存在"
+  }
+或
+  {
+    code: 1,
+    message: "以下订单未被锁定，无法解锁: 订单编号列表"
+  }
+或
+  {
+    code: 1,
+    message: "您没有权限执行此操作，仅限超级管理员和财务角色"
+  }
+
+### 8. 手动全量重算客服佣金
+POST /api/orders/recalculate-commission
+描述: 遍历orders表所有订单，按最新规则重新计算customer_commission，并同步到customer_orders表。仅限超级管理员和财务角色可用。
+
+权限:
+  - 仅限超级管理员和财务角色
+
+请求头:
+  - Authorization: Bearer <token>
+
+请求参数:
+  无需参数
+
+响应:
+  {
+    code: 0,
+    message: "全量重算完成，共处理 1234 个订单",
+    data: {
+      sample: [
+        {
+          order_id: "4200002411202506272865982152",
+          commission: 51.85
+        },
+        {
+          order_id: "4200002695202506056256409385",
+          commission: 91.85
+        }
+        // ...最多10条示例
+      ],
+      total: 1234
+    }
+  }
+
+错误响应:
+  {
+    code: 1,
+    message: "您没有权限执行此操作，仅限超级管理员和财务角色"
+  }
+或
+  {
+    code: 1,
+    message: "服务器错误",
+    error: "错误信息"
+  }
+
+说明:
+- 该接口会对所有orders表订单按最新规则重算客服佣金，并同步到customer_orders表。
+- 返回处理订单总数和部分示例数据。
+- 幂等安全，可多次调用。
 
 ## 七、统计模块
 
@@ -817,9 +1056,11 @@ POST /api/customer-orders
   - is_fixed: 是否定稿(必填，0-未定稿，1-已定稿)
   - order_content: 稿件内容信息(可选)
   - word_count: 稿件字数(可选)
-  - fee: 稿费(可选)
+  - fee: 第一个写手的稿费(可选)
   - customer_id: 客服ID(可选，默认为当前登录用户)
-  - writer_id: 写手ID(可选)
+  - writer_id: 第一个写手ID(可选)
+  - fee_2: 第二个写手的稿费(可选)
+  - writer_id_2: 第二个写手ID(可选)
   - dispatch_id: 派单编号(可选，唯一，非必填)
   - exchange_time: 交稿时间(可选)
   - payment_channel: 付款渠道(可选)
@@ -829,9 +1070,11 @@ POST /api/customer-orders
   - order_amount: 订单下单金额(可选)
   - refund_amount: 退款金额(可选)
   - special_situation: 特殊情况(不结算)(可选)
+  - fee_per_1000: 每一千字/费用(可选，decimal，前端可不传或为空)
 字段校验说明:
   - dispatch_id 如有填写，必须唯一，否则返回"派单编号已存在"。
   - writer_id 非必填，如有填写，需为有效写手ID，否则返回"指定的写手不存在"。
+  - writer_id_2 非必填，如有填写，需为有效写手ID，否则返回"指定的第二个写手不存在"。
   - order_id 必须唯一，否则返回"订单号已存在"。
 响应:
   {
@@ -860,6 +1103,11 @@ POST /api/customer-orders
   或
   {
     code: 1,
+    message: "指定的第二个写手不存在"
+  }
+  或
+  {
+    code: 1,
     message: "您没有权限执行此操作"
   }
 
@@ -875,8 +1123,14 @@ GET /api/customer-orders
   - date_start: 开始日期(可选，格式：YYYY-MM-DD)
   - date_end: 结束日期(可选，格式：YYYY-MM-DD)
   - customer_id: 客服ID(可选)
-  - writer_id: 写手ID(可选)
+  - writer_id: 写手ID(可选，仅支持第一个写手)
   - is_fixed: 是否定稿(可选，0-未定稿，1-已定稿)
+  - dispatch_id: 派单编号(可选，精确匹配)
+  - customer_name: 客户名称(可选，模糊匹配)
+  - fee_min: 稿费最小值(可选，总稿费 = 第一个写手稿费 + 第二个写手稿费)
+  - fee_max: 稿费最大值(可选，总稿费 = 第一个写手稿费 + 第二个写手稿费)
+  - order_amount_min: 订单金额最小值(可选)
+  - order_amount_max: 订单金额最大值(可选)
 响应:
   {
     code: 0,
@@ -890,11 +1144,14 @@ GET /api/customer-orders
           is_fixed: 是否定稿,
           order_content: 稿件内容信息,
           word_count: 稿件字数,
-          fee: 稿费,
+          fee: 第一个写手的稿费,
           customer_id: 客服ID,
           customer_service_name: 客服用户名,
-          writer_id: 写手ID,
-          writer_name: 写手姓名,
+          writer_id: 第一个写手ID,
+          writer_name: 第一个写手姓名,
+          fee_2: 第二个写手的稿费,
+          writer_id_2: 第二个写手ID,
+          writer_name_2: 第二个写手姓名,
           exchange_time: 交稿时间,
           payment_channel: 付款渠道,
           store_name: 店铺名或客户线下,
@@ -903,6 +1160,12 @@ GET /api/customer-orders
           order_amount: 订单下单金额,
           refund_amount: 退款金额,
           special_situation: 特殊情况(不结算),
+          dispatch_id: 派单编号,
+          total_fee: 总稿费(第一个写手稿费 + 第二个写手稿费),
+          is_locked: 是否锁定(0-未锁定,1-已锁定),
+          locked_by: 锁定人ID,
+          locked_at: 锁定时间,
+          locked_by_name: 锁定人用户名,
           created_at: 记录创建时间,
           updated_at: 记录更新时间
         }
@@ -921,6 +1184,11 @@ GET /api/customer-orders/:id
     code: 0,
     data: {
       // 订单详细信息，字段同列表接口
+      // 包括新增的锁定相关字段：
+      // is_locked: 是否锁定(0-未锁定,1-已锁定)
+      // locked_by: 锁定人ID
+      // locked_at: 锁定时间
+      // locked_by_name: 锁定人用户名
     },
     message: "获取成功"
   }
@@ -937,9 +1205,11 @@ PUT /api/customer-orders/:id
   - Authorization: Bearer <token>
 请求参数:
   // 同创建接口，所有字段均为可选
+  - fee_per_1000: 每一千字/费用(可选，decimal，前端可不传或为空)
 字段校验说明:
   - dispatch_id 如有填写，必须唯一，否则返回"派单编号已存在"。
   - writer_id 非必填，如有填写，需为有效写手ID，否则返回"指定的写手不存在"。
+  - writer_id_2 非必填，如有填写，需为有效写手ID，否则返回"指定的第二个写手不存在"。
   - order_id 必须唯一，否则返回"订单号已存在"。
 响应:
   {
@@ -964,7 +1234,17 @@ PUT /api/customer-orders/:id
   或
   {
     code: 1,
+    message: "指定的第二个写手不存在"
+  }
+  或
+  {
+    code: 1,
     message: "订单不存在"
+  }
+  或
+  {
+    code: 1,
+    message: "订单已被锁定，仅限超级管理员和财务角色可以修改"
   }
   或
   {
@@ -990,6 +1270,11 @@ DELETE /api/customer-orders/:id
   或
   {
     code: 1,
+    message: "订单已被锁定，仅限超级管理员和财务角色可以删除"
+  }
+  或
+  {
+    code: 1,
     message: "您没有权限执行此操作"
   }
 
@@ -1002,7 +1287,11 @@ POST /api/customer-orders/merge
   无需参数，系统会自动处理所有符合条件的订单
 合并逻辑说明:
   - 系统会查找所有 orders.customer_id 或 writer_id 为空的订单，批量用 customer_orders 的 customer_id、writer_id 进行同步。
-  - customer_id 一定同步，writer_id 仅在有值时同步。
+  - customer_id 一定同步，writer_id 仅在有值时同步（优先同步第一个写手）。
+  - 注意：订单总表(orders)现在支持两个写手，会同步第一个写手(writer_id)和第二个写手(writer_id_2)到订单总表。
+  - 同时会同步写手佣金信息：第一个写手佣金(writer_fee)和第二个写手佣金(writer_fee_2)。
+  - 支持增量更新：如果订单总表中缺少佣金信息，会自动从客服订单表同步。
+  - 同步fee_per_1000字段：如果客服订单表有值，则同步到订单总表。
 响应:
   {
     code: 0,
@@ -1013,7 +1302,8 @@ POST /api/customer-orders/merge
         {
           order_id: 订单编号,
           customer_id: 客服ID,
-          writer_id: 写手ID
+          writer_id: 第一个写手ID,
+          writer_id_2: 第二个写手ID
         }
       ]
     }
@@ -1023,11 +1313,66 @@ POST /api/customer-orders/merge
     code: 1,
     message: "没有符合条件的订单需要合并"
   }
+
+### 9. 导出客服佣金明细
+GET /api/customer-orders/export-commission-data
+描述: 导出指定时间周期内客服订单表每一条数据，包含客服佣金、写手稿费及写手支付宝信息等关键字段。仅限超级管理员和财务角色。
+
+权限:
+  - 仅限超级管理员和财务角色
+
+请求头:
+  - Authorization: Bearer <token>
+
+请求参数:
+  - start: 开始日期(必填，格式YYYY-MM-DD)
+  - end: 结束日期(必填，格式YYYY-MM-DD)
+
+响应:
+  {
+    code: 0,
+    data: [
+      {
+        id: 123,
+        order_id: "20250630001",
+        date: "2025-06-30",
+        customer_id: 18,
+        customer_service_name: "张三",
+        customer_commission: 51.85,
+        writer_id: "w24060101",
+        writer_name: "李四",
+        fee: 40.00,
+        writer_alipay_name: "李四",
+        writer_alipay_account: "lisi@alipay.com",
+        writer_id_2: "w24060102",
+        writer_name_2: "王五",
+        fee_2: 30.00,
+        writer2_alipay_name: "王五",
+        writer2_alipay_account: "wangwu@alipay.com"
+      },
+      ...
+    ]
+  }
+
+错误响应:
+  {
+    code: 1,
+    message: "您没有权限执行此操作，仅限超级管理员和财务角色"
+  }
 或
   {
     code: 1,
-    message: "您没有权限执行此操作"
+    message: "请提供导出时间周期（start, end）"
   }
+或
+  {
+    code: 1,
+    message: "服务器错误"
+  }
+
+说明:
+- 每一条客服订单都导出，包含客服佣金、写手稿费、写手支付宝姓名和账号等关键字段。
+- 前端可直接用返回数据生成csv/excel。
 
 ## 九、写手评分管理模块
 

@@ -9,6 +9,7 @@ const db_1 = __importDefault(require("../config/db"));
 // 获取用户列表
 const getUsers = async (req, res) => {
     try {
+        console.log('用户查询参数:', req.query);
         const { username, role_id, status } = req.query;
         let sql = `
       SELECT u.*, r.role_name 

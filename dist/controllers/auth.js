@@ -81,12 +81,21 @@ const getUserInfo = async (req, res) => {
        INNER JOIN role_menus rm ON m.id = rm.menu_id 
        WHERE rm.role_id = ?
        ORDER BY m.sort`, [user.role_id]);
+        let writerInfo = null;
+        if (roles[0]?.role_name === '写手') {
+            // 用username查writer_info.writer_id
+            const [writerRows] = await (0, db_1.query)('SELECT alipay_name, alipay_account FROM writer_info WHERE writer_id = ?', [user.username]);
+            if (writerRows.length > 0) {
+                writerInfo = writerRows[0];
+            }
+        }
         res.json({
             code: 0,
             data: {
                 ...user,
                 role: roles[0],
-                menus
+                menus,
+                ...(writerInfo ? { alipay_name: writerInfo.alipay_name, alipay_account: writerInfo.alipay_account } : {})
             }
         });
     }

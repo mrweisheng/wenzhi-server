@@ -92,4 +92,120 @@ export const checkCasePermission = async (
       message: '服务器错误'
     })
   }
+}
+
+// 检查客服订单锁定操作权限中间件（仅限超级管理员和财务角色）
+export const checkCustomerOrderLockPermission = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = (req as any).userId
+
+    // 查询用户角色
+    const [userRoles]: any = await pool.query(
+      `SELECT r.role_name 
+       FROM users u 
+       INNER JOIN roles r ON u.role_id = r.id 
+       WHERE u.id = ?`,
+      [userId]
+    )
+
+    if (userRoles.length === 0) {
+      return res.status(403).json({
+        code: 1,
+        message: '没有权限执行此操作，仅限超级管理员和财务角色'
+      })
+    }
+
+    const roleName = userRoles[0].role_name
+
+    // 判断是否有权限（超管或财务角色）
+    if (
+      roleName.includes('超级管理员') || 
+      roleName.includes('财务')
+    ) {
+      next()
+    } else {
+      return res.status(403).json({
+        code: 1,
+        message: '没有权限执行此操作，仅限超级管理员和财务角色'
+      })
+    }
+  } catch (error) {
+    console.error('Check customer order lock permission error:', error)
+    res.status(500).json({
+      code: 1,
+      message: '服务器错误'
+    })
+  }
+}
+
+// 检查修改锁定订单权限中间件
+export const checkLockedOrderModifyPermission = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = (req as any).userId
+    const orderId = req.params.id || req.body.order_id
+
+    if (!orderId) {
+      return res.status(400).json({
+        code: 1,
+        message: '订单ID不能为空'
+      })
+    }
+
+    // 查询用户角色
+    const [userRoles]: any = await pool.query(
+      `SELECT r.role_name 
+       FROM users u 
+       INNER JOIN roles r ON u.role_id = r.id 
+       WHERE u.id = ?`,
+      [userId]
+    )
+
+    if (userRoles.length === 0) {
+      return res.status(403).json({
+        code: 1,
+        message: '没有权限执行此操作'
+      })
+    }
+
+    const roleName = userRoles[0].role_name
+
+    // 检查订单是否被锁定
+    const [orderInfo]: any = await pool.query(
+      'SELECT is_locked FROM customer_orders WHERE id = ?',
+      [orderId]
+    )
+
+    if (orderInfo.length === 0) {
+      return res.status(404).json({
+        code: 1,
+        message: '订单不存在'
+      })
+    }
+
+    // 如果订单被锁定，只有超级管理员和财务角色可以修改
+    if (orderInfo[0].is_locked) {
+      if (!roleName.includes('超级管理员') && !roleName.includes('财务')) {
+        return res.status(403).json({
+          code: 1,
+          message: '订单已被锁定，仅限超级管理员和财务角色可以修改'
+        })
+      }
+    }
+
+    next()
+  } catch (error) {
+    console.error('Check locked order modify permission error:', error)
+    res.status(500).json({
+      code: 1,
+      message: '服务器错误'
+    })
+  }
 } 

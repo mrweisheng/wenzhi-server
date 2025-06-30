@@ -10,4 +10,5 @@ const router = express_1.default.Router();
 router.get('/', auth_1.auth, order_1.getOrders);
 router.put('/:orderId/customer', auth_1.auth, order_1.updateOrderCustomer);
 router.put('/:orderId/writer', auth_1.auth, order_1.updateOrderWriter);
+router.post('/recalculate-commission', auth_1.auth, order_1.recalculateCommission);
 exports.default = router;

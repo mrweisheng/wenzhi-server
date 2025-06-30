@@ -20,6 +20,7 @@ const error_1 = require("./middlewares/error");
 const db_1 = require("./config/db");
 const logger_1 = require("./config/logger");
 const morgan_1 = __importDefault(require("morgan"));
+const scheduler_1 = require("./scheduler");
 const app = (0, express_1.default)();
 // 优化启动流程
 const startServer = async () => {
@@ -95,6 +96,10 @@ const startServer = async () => {
       `;
             console.log(startupMessage);
             logger_1.log.info('服务器启动成功', { port: PORT });
+            // 启动定时任务
+            (0, scheduler_1.scheduleCustomerOrderSync)();
+            // 执行初始同步
+            (0, scheduler_1.initialCustomerOrderSync)();
         });
     }
     catch (error) {

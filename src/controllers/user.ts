@@ -5,6 +5,7 @@ import pool from '../config/db'
 // 获取用户列表
 export const getUsers = async (req: Request, res: Response) => {
   try {
+    console.log('用户查询参数:', req.query)
     const { username, role_id, status } = req.query
 
     let sql = `

@@ -16,6 +16,7 @@ import { errorHandler } from './middlewares/error'
 import { testConnection, query } from './config/db'
 import { log } from './config/logger'
 import morgan from 'morgan'
+import { scheduleCustomerOrderSync, initialCustomerOrderSync } from './scheduler'
 
 const app = express()
 
@@ -101,6 +102,12 @@ const startServer = async () => {
       `
       console.log(startupMessage)
       log.info('服务器启动成功', { port: PORT })
+      
+      // 启动定时任务
+      scheduleCustomerOrderSync()
+      
+      // 执行初始同步
+      initialCustomerOrderSync()
     })
   } catch (error: any) {
     log.error('服务器启动失败', error)
