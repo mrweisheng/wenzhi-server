@@ -1316,7 +1316,7 @@ POST /api/customer-orders/merge
 
 ### 9. 导出客服佣金明细
 GET /api/customer-orders/export-commission-data
-描述: 导出指定时间周期内客服订单表每一条数据，包含客服佣金、写手稿费及写手支付宝信息等关键字段。仅限超级管理员和财务角色。
+描述: 导出指定时间周期内客服订单表每一条数据，包含客服佣金、写手稿费及写手支付宝信息等关键字段，并返回全局汇总、客服汇总、写手汇总。仅限超级管理员和财务角色。
 
 权限:
   - 仅限超级管理员和财务角色
@@ -1331,47 +1331,59 @@ GET /api/customer-orders/export-commission-data
 响应:
   {
     code: 0,
-    data: [
-      {
-        id: 123,
-        order_id: "20250630001",
-        date: "2025-06-30",
-        customer_id: 18,
-        customer_service_name: "张三",
-        customer_commission: 51.85,
-        writer_id: "w24060101",
-        writer_name: "李四",
-        fee: 40.00,
-        writer_alipay_name: "李四",
-        writer_alipay_account: "lisi@alipay.com",
-        writer_id_2: "w24060102",
-        writer_name_2: "王五",
-        fee_2: 30.00,
-        writer2_alipay_name: "王五",
-        writer2_alipay_account: "wangwu@alipay.com"
+    data: {
+      orders: [
+        {
+          id: 订单ID,
+          order_id: 订单编号,
+          date: 日期,
+          customer_id: 客服ID,
+          customer_service_name: 客服用户名,
+          customer_commission: 客服佣金,
+          writer_id: 第一个写手ID,
+          writer_name: 第一个写手姓名,
+          fee: 第一个写手稿费,
+          writer_alipay_name: 第一个写手支付宝姓名,
+          writer_alipay_account: 第一个写手支付宝账号,
+          writer_id_2: 第二个写手ID,
+          writer_name_2: 第二个写手姓名,
+          fee_2: 第二个写手稿费,
+          writer2_alipay_name: 第二个写手支付宝姓名,
+          writer2_alipay_account: 第二个写手支付宝账号
+        },
+        ...
+      ],
+      summary: {
+        order_count: 订单数量,
+        customer_commission_total: 客服佣金总和,
+        writer_fee_total: 写手佣金总和
       },
-      ...
-    ]
-  }
-
-错误响应:
-  {
-    code: 1,
-    message: "您没有权限执行此操作，仅限超级管理员和财务角色"
-  }
-或
-  {
-    code: 1,
-    message: "请提供导出时间周期（start, end）"
-  }
-或
-  {
-    code: 1,
-    message: "服务器错误"
+      customer_summary: [
+        {
+          customer_id: 客服ID,
+          customer_service_name: 客服用户名,
+          order_count: 订单数,
+          customer_commission_total: 客服佣金总和
+        },
+        ...
+      ],
+      writer_summary: [
+        {
+          writer_id: 写手ID,
+          writer_name: 写手姓名,
+          writer_alipay_name: 支付宝姓名,
+          writer_alipay_account: 支付宝账号,
+          order_count: 订单数,
+          writer_fee_total: 写手稿费总和
+        },
+        ...
+      ]
+    }
   }
 
 说明:
-- 每一条客服订单都导出，包含客服佣金、写手稿费、写手支付宝姓名和账号等关键字段。
+- 只统计customer_commission非0/非0.00/非NULL/非空的订单，正负数都统计。
+- 写手汇总会合并写手1和写手2的所有稿费。
 - 前端可直接用返回数据生成csv/excel。
 
 ## 九、写手评分管理模块

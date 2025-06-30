@@ -441,6 +441,79 @@ export const getCustomerOrderById = async (req: Request, res: Response) => {
   }
 }
 
+// 提取单条订单佣金计算函数
+export const recalculateCustomerCommissionForOrder = async (orderId: string) => {
+  // 查询订单详情
+  const [orderDetailRows]: any = await pool.query(
+    `SELECT amount, refund_amount, fee, channel, status, customer_id, writer_id, writer_id_2, writer_fee, writer_fee_2, fee_per_1000
+     FROM orders WHERE order_id = ?`,
+    [orderId]
+  );
+  const orderDetail = orderDetailRows[0];
+  let commission = null;
+  if (orderDetail) {
+    const amount = Number(orderDetail.amount || 0);
+    const refund = Number(orderDetail.refund_amount || 0);
+    const netIncome = amount - refund;
+    const channel = orderDetail.channel || '';
+    const status = orderDetail.status || '';
+    const customerId = orderDetail.customer_id;
+    const writerId = orderDetail.writer_id;
+    const writerId2 = orderDetail.writer_id_2;
+    const writerFee = Number(orderDetail.writer_fee || 0);
+    const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
+    const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
+    // 参与计算的订单范围
+    let eligible = false;
+    if (customerId && netIncome > 0) {
+      if (channel.includes('企业微信')) {
+        eligible = true;
+      } else if (channel.includes('支付宝') || channel.includes('淘宝') || channel.includes('天猫')) {
+        if (status.includes('成功')) eligible = true;
+      }
+    }
+    if (eligible) {
+      const hasWriter = (writerId || writerId2) && (writerFee > 0 || writerFee2 > 0);
+      const totalWriterFee = writerFee + writerFee2;
+      // 没有写手
+      if (!hasWriter) {
+        commission = +(netIncome * 0.42).toFixed(2);
+      } else {
+        // 有写手
+        if (!feePer1000) {
+          // 未填写字数
+          commission = +(netIncome * 0.42 - totalWriterFee).toFixed(2);
+        } else {
+          const commissionBase = netIncome * 0.42;
+          if (totalWriterFee < commissionBase) {
+            commission = +(commissionBase - totalWriterFee).toFixed(2);
+          } else if (totalWriterFee >= commissionBase && totalWriterFee <= netIncome * 0.5) {
+            if (feePer1000 >= 60) {
+              commission = +(commissionBase - totalWriterFee).toFixed(2);
+            } else {
+              commission = 5.00;
+            }
+          } else if (totalWriterFee > netIncome * 0.5) {
+            commission = +(commissionBase - totalWriterFee).toFixed(2);
+          }
+        }
+      }
+    } else {
+      commission = 0;
+    }
+    // 更新orders表
+    await pool.query(
+      `UPDATE orders SET customer_commission = ? WHERE order_id = ?`,
+      [commission, orderId]
+    );
+    // 同步到customer_orders表
+    await pool.query(
+      `UPDATE customer_orders SET customer_commission = ? WHERE order_id = ?`,
+      [commission, orderId]
+    );
+  }
+};
+
 // 更新客服订单
 export const updateCustomerOrder = async (req: Request, res: Response) => {
   try {
@@ -522,9 +595,9 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
           updateData.writer_id = writer[0].writer_id;
         }
       }
-      // 校验业务编号是否存在
+      // 校验业务编号是否存在，并查出数字ID
       const [writerCheck]: any = await pool.query(
-        'SELECT writer_id FROM writer_info WHERE writer_id = ?',
+        'SELECT writer_id, id FROM writer_info WHERE writer_id = ?',
         [updateData.writer_id]
       );
       if (!writerCheck || writerCheck.length === 0) {
@@ -533,11 +606,12 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
           message: '指定的写手不存在'
         })
       }
+      // 记录数字ID用于同步到orders表
+      updateData._writer_numeric_id = writerCheck[0].id;
     }
 
     // 检查第二个写手是否存在（如果有填写）
     if (updateData.writer_id_2) {
-      // 如果传的是纯数字，自动查业务编号
       if (/^\d+$/.test(updateData.writer_id_2)) {
         const [writer2]: any = await pool.query(
           'SELECT writer_id FROM writer_info WHERE id = ?',
@@ -547,9 +621,8 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
           updateData.writer_id_2 = writer2[0].writer_id;
         }
       }
-      // 校验业务编号是否存在
       const [writerCheck2]: any = await pool.query(
-        'SELECT writer_id FROM writer_info WHERE writer_id = ?',
+        'SELECT writer_id, id FROM writer_info WHERE writer_id = ?',
         [updateData.writer_id_2]
       );
       if (!writerCheck2 || writerCheck2.length === 0) {
@@ -558,6 +631,7 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
           message: '指定的第二个写手不存在'
         })
       }
+      updateData._writer_numeric_id_2 = writerCheck2[0].id;
     }
 
     // 处理退款金额：如果为空、undefined或null，设置为0.00
@@ -572,35 +646,31 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
         'SELECT order_id, customer_id, writer_id, writer_id_2 FROM customer_orders WHERE id = ?',
         [id]
       );
-      
       if (orderInfo.length > 0) {
         const order = orderInfo[0];
-        
         // 检查订单总表是否存在该订单
         const [systemOrder]: any = await pool.query(
           'SELECT order_id FROM orders WHERE order_id = ?',
           [order.order_id]
         );
-        
         if (systemOrder.length > 0) {
           // 同步客服ID和第一个写手
-          if (order.writer_id) {
+          if (updateData._writer_numeric_id) {
             await pool.query(
               'UPDATE orders SET customer_id = ?, writer_id = ? WHERE order_id = ?',
-              [order.customer_id, order.writer_id, order.order_id]
+              [updateData.customer_id || order.customer_id, updateData._writer_numeric_id, order.order_id]
             );
           } else {
             await pool.query(
               'UPDATE orders SET customer_id = ? WHERE order_id = ?',
-              [order.customer_id, order.order_id]
+              [updateData.customer_id || order.customer_id, order.order_id]
             );
           }
-          
           // 同步第二个写手（如果存在）
-          if (order.writer_id_2) {
+          if (updateData._writer_numeric_id_2) {
             await pool.query(
               'UPDATE orders SET writer_id_2 = ? WHERE order_id = ?',
-              [order.writer_id_2, order.order_id]
+              [updateData._writer_numeric_id_2, order.order_id]
             );
           }
         }
@@ -611,11 +681,49 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
       updateData.fee_per_1000 = (updateData.fee_per_1000 !== undefined && updateData.fee_per_1000 !== null && updateData.fee_per_1000 !== '') ? updateData.fee_per_1000 : null;
     }
 
+    // 删除临时字段，防止拼进SQL
+    delete updateData._writer_numeric_id;
+    delete updateData._writer_numeric_id_2;
+
     // 更新订单
     await pool.query(
       'UPDATE customer_orders SET ? WHERE id = ?',
       [updateData, id]
     )
+
+    // 自动同步稿费等字段到 orders 表
+    const [orderRow]: any = await pool.query('SELECT order_id FROM customer_orders WHERE id = ?', [id]);
+    if (orderRow && orderRow.length > 0) {
+      const orderId = orderRow[0].order_id;
+      // 构建需要同步的字段
+      const updateFields = [];
+      const updateValues = [];
+      if (updateData.fee !== undefined) {
+        updateFields.push('writer_fee = ?');
+        updateValues.push(updateData.fee);
+      }
+      if (updateData.fee_2 !== undefined) {
+        updateFields.push('writer_fee_2 = ?');
+        updateValues.push(updateData.fee_2);
+      }
+      if (updateData.fee_per_1000 !== undefined) {
+        updateFields.push('fee_per_1000 = ?');
+        updateValues.push(updateData.fee_per_1000);
+      }
+      if (updateFields.length > 0) {
+        updateValues.push(orderId);
+        // 只在 orders 表有该 order_id 时才更新
+        const [ordersCheck]: any = await pool.query('SELECT order_id FROM orders WHERE order_id = ?', [orderId]);
+        if (ordersCheck && ordersCheck.length > 0) {
+          await pool.query(
+            `UPDATE orders SET ${updateFields.join(', ')} WHERE order_id = ?`,
+            updateValues
+          );
+        }
+      }
+      // 自动重算客服佣金
+      await recalculateCustomerCommissionForOrder(orderId);
+    }
 
     res.json({
       code: 0,
@@ -1283,7 +1391,6 @@ export const exportCustomerCommission = async (req, res) => {
   try {
     const userId = (req as any).userId;
     const { start, end } = req.query;
-    // 打印入参
     console.log('[导出客服佣金] 入参:', { userId, start, end });
     // 权限校验：仅限超级管理员和财务
     const [currentUser]: any = await pool.query(
@@ -1301,7 +1408,8 @@ export const exportCustomerCommission = async (req, res) => {
       console.log('[导出客服佣金] 缺少时间参数');
       return res.status(400).json({ code: 1, message: '请提供导出时间周期（start, end）' });
     }
-    const sql =
+    // 1. 查询所有明细订单
+    const [orders]: any = await pool.query(
       `SELECT co.id, co.order_id, co.date, co.customer_id, u.username AS customer_service_name, co.customer_commission,
               co.writer_id, w1.name AS writer_name, co.fee, w1.alipay_name AS writer_alipay_name, w1.alipay_account AS writer_alipay_account,
               co.writer_id_2, w2.name AS writer_name_2, co.fee_2, w2.alipay_name AS writer2_alipay_name, w2.alipay_account AS writer2_alipay_account
@@ -1310,18 +1418,78 @@ export const exportCustomerCommission = async (req, res) => {
        LEFT JOIN writer_info w1 ON co.writer_id = w1.writer_id
        LEFT JOIN writer_info w2 ON co.writer_id_2 = w2.writer_id
        WHERE co.date >= ? AND co.date <= ?
-       ORDER BY co.date ASC`;
-    const params = [start, end];
-    console.log('[导出客服佣金] 执行SQL:', sql);
-    console.log('[导出客服佣金] SQL参数:', params);
-    const [rows]: any = await pool.query(sql, params);
-    console.log('[导出客服佣金] 查询结果数量:', rows.length);
-    if (rows.length > 0) {
-      console.log('[导出客服佣金] 第一条数据:', rows[0]);
-    } else {
-      console.log('[导出客服佣金] 查询结果为空');
-    }
-    res.json({ code: 0, data: rows });
+         AND co.customer_commission IS NOT NULL
+         AND co.customer_commission != ''
+         AND co.customer_commission <> 0
+         AND co.customer_commission <> 0.00
+       ORDER BY co.date ASC`,
+      [start, end]
+    );
+    // 2. 汇总全局总和
+    const [summaryRows]: any = await pool.query(
+      `SELECT COUNT(*) AS order_count,
+              SUM(customer_commission) AS customer_commission_total,
+              SUM(COALESCE(fee,0) + COALESCE(fee_2,0)) AS writer_fee_total
+       FROM customer_orders
+       WHERE date >= ? AND date <= ?
+         AND customer_commission IS NOT NULL
+         AND customer_commission != ''
+         AND customer_commission <> 0
+         AND customer_commission <> 0.00`,
+      [start, end]
+    );
+    const summary = summaryRows[0] || { order_count: 0, customer_commission_total: 0, writer_fee_total: 0 };
+    // 3. 客服汇总
+    const [customerSummary]: any = await pool.query(
+      `SELECT co.customer_id, u.username AS customer_service_name,
+              COUNT(*) AS order_count,
+              SUM(co.customer_commission) AS customer_commission_total
+       FROM customer_orders co
+       LEFT JOIN users u ON co.customer_id = u.id
+       WHERE co.date >= ? AND co.date <= ?
+         AND co.customer_commission IS NOT NULL
+         AND co.customer_commission != ''
+         AND co.customer_commission <> 0
+         AND co.customer_commission <> 0.00
+       GROUP BY co.customer_id, u.username`,
+      [start, end]
+    );
+    // 4. 写手汇总（合并写手1/2）
+    const [writerSummary]: any = await pool.query(
+      `SELECT w.writer_id, w.name AS writer_name, w.alipay_name, w.alipay_account,
+              SUM(t.fee) AS writer_fee_total, COUNT(*) AS order_count
+       FROM (
+         SELECT writer_id, fee FROM customer_orders
+         WHERE date >= ? AND date <= ?
+           AND customer_commission IS NOT NULL
+           AND customer_commission != ''
+           AND customer_commission <> 0
+           AND customer_commission <> 0.00
+           AND writer_id IS NOT NULL AND writer_id != ''
+         UNION ALL
+         SELECT writer_id_2 AS writer_id, fee_2 AS fee FROM customer_orders
+         WHERE date >= ? AND date <= ?
+           AND customer_commission IS NOT NULL
+           AND customer_commission != ''
+           AND customer_commission <> 0
+           AND customer_commission <> 0.00
+           AND writer_id_2 IS NOT NULL AND writer_id_2 != ''
+       ) t
+       LEFT JOIN writer_info w ON t.writer_id = w.writer_id
+       GROUP BY w.writer_id, w.name, w.alipay_name, w.alipay_account
+       HAVING writer_fee_total IS NOT NULL AND writer_fee_total != 0
+       ORDER BY writer_fee_total DESC`,
+      [start, end, start, end]
+    );
+    res.json({
+      code: 0,
+      data: {
+        orders,
+        summary,
+        customer_summary: customerSummary,
+        writer_summary: writerSummary
+      }
+    });
   } catch (error) {
     console.error('Export customer commission error:', error);
     res.status(500).json({ code: 1, message: '服务器错误' });
