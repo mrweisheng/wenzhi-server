@@ -11,7 +11,7 @@
  Target Server Version : 80041 (8.0.41-0ubuntu0.20.04.1)
  File Encoding         : 65001
 
- Date: 30/06/2025 15:53:27
+ Date: 22/07/2025 19:42:05
 */
 
 SET NAMES utf8mb4;
@@ -70,6 +70,7 @@ CREATE TABLE `customer_orders`  (
   `locked_at` timestamp NULL DEFAULT NULL COMMENT '锁定时间',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
+  `settlement_status` enum('pending','settled') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT 'pending' COMMENT '结算状态：待结算/已结算',
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `idx_order_id`(`order_id` ASC) USING BTREE,
   UNIQUE INDEX `idx_dispatch_id`(`dispatch_id` ASC) USING BTREE,
@@ -81,7 +82,7 @@ CREATE TABLE `customer_orders`  (
   INDEX `idx_locked_by`(`locked_by` ASC) USING BTREE,
   CONSTRAINT `fk_customer_order_customer` FOREIGN KEY (`customer_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_customer_order_locked_by` FOREIGN KEY (`locked_by`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE = InnoDB AUTO_INCREMENT = 902 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客服填报订单表' ROW_FORMAT = Dynamic;
+) ENGINE = InnoDB AUTO_INCREMENT = 1728 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客服填报订单表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for issue_records
@@ -253,7 +254,7 @@ CREATE TABLE `users`  (
   UNIQUE INDEX `username`(`username` ASC) USING BTREE,
   INDEX `role_id`(`role_id` ASC) USING BTREE,
   CONSTRAINT `users_ibfk_1` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 104 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
+) ENGINE = InnoDB AUTO_INCREMENT = 132 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for writer_info
@@ -287,7 +288,7 @@ CREATE TABLE `writer_info`  (
   PRIMARY KEY (`id`, `writer_id`) USING BTREE,
   INDEX `id`(`id` ASC) USING BTREE,
   INDEX `idx_name`(`name` ASC) USING BTREE
-) ENGINE = InnoDB AUTO_INCREMENT = 83970 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
+) ENGINE = InnoDB AUTO_INCREMENT = 83981 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for writer_ratings

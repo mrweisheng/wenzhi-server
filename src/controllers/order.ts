@@ -276,9 +276,13 @@ export const recalculateCommission = async (req, res) => {
     ) {
       return res.status(403).json({ code: 1, message: '您没有权限执行此操作，仅限超级管理员和财务角色' });
     }
-    // 只查近30天且customer_id不为空的订单
+    // 只查近30天且customer_id不为空的订单，同时查询定稿状态
     const [orders]: any = await pool.query(
-      `SELECT order_id, amount, refund_amount, fee, channel, status, customer_id, writer_id, writer_id_2, writer_fee, writer_fee_2, fee_per_1000 FROM orders WHERE customer_id IS NOT NULL AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
+      `SELECT o.order_id, o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
+              co.is_fixed
+       FROM orders o
+       LEFT JOIN customer_orders co ON o.order_id = co.order_id
+       WHERE o.customer_id IS NOT NULL AND o.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
     );
     console.log(`[重算客服佣金] 开始全量重算（近30天），共 ${orders.length} 条订单，时间：${new Date().toLocaleString()}`);
     // 异步处理，立即返回前端
@@ -301,9 +305,10 @@ export const recalculateCommission = async (req, res) => {
         const writerFee = Number(order.writer_fee || 0);
         const writerFee2 = Number(order.writer_fee_2 || 0);
         const feePer1000 = Number(order.fee_per_1000 || 0);
+        const isFixed = order.is_fixed === 1; // 是否定稿
         const netIncome = amount - refund;
         let eligible = false;
-        if (customerId && netIncome > 0) {
+        if (customerId && netIncome > 0 && isFixed) { // 添加定稿状态判断
           if (channel.includes('企业微信')) {
             eligible = true;
           } else if (channel.includes('支付宝') || channel.includes('淘宝') || channel.includes('天猫')) {

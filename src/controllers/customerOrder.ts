@@ -443,15 +443,25 @@ export const getCustomerOrderById = async (req: Request, res: Response) => {
 
 // 提取单条订单佣金计算函数
 export const recalculateCustomerCommissionForOrder = async (orderId: string) => {
-  // 查询订单详情
+  // 查询订单详情（同时查询orders表和customer_orders表的定稿状态和结算状态）
   const [orderDetailRows]: any = await pool.query(
-    `SELECT amount, refund_amount, fee, channel, status, customer_id, writer_id, writer_id_2, writer_fee, writer_fee_2, fee_per_1000
-     FROM orders WHERE order_id = ?`,
+    `SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
+            co.is_fixed, co.settlement_status
+     FROM orders o
+     LEFT JOIN customer_orders co ON o.order_id = co.order_id
+     WHERE o.order_id = ?`,
     [orderId]
   );
   const orderDetail = orderDetailRows[0];
   let commission = null;
+  
   if (orderDetail) {
+    // 检查是否已结算，防止重复计算
+    if (orderDetail.settlement_status === 'settled') {
+      console.log(`订单 ${orderId} 已结算，跳过重复计算`);
+      return;
+    }
+    
     const amount = Number(orderDetail.amount || 0);
     const refund = Number(orderDetail.refund_amount || 0);
     const netIncome = amount - refund;
@@ -463,15 +473,15 @@ export const recalculateCustomerCommissionForOrder = async (orderId: string) => 
     const writerFee = Number(orderDetail.writer_fee || 0);
     const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
     const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
-    // 参与计算的订单范围
+    const isFixed = orderDetail.is_fixed === 1; // 是否定稿
+    
+    // 参与计算的订单范围 - 简化逻辑，只检查定稿状态
     let eligible = false;
-    if (customerId && netIncome > 0) {
-      if (channel.includes('企业微信')) {
-        eligible = true;
-      } else if (channel.includes('支付宝') || channel.includes('淘宝') || channel.includes('天猫')) {
-        if (status.includes('成功')) eligible = true;
-      }
+    if (customerId && netIncome > 0 && isFixed) { // 只检查定稿状态，不检查orders表状态
+      // 所有渠道的订单，只要已定稿就参与计算
+      eligible = true;
     }
+    
     if (eligible) {
       const hasWriter = (writerId || writerId2) && (writerFee > 0 || writerFee2 > 0);
       const totalWriterFee = writerFee + writerFee2;
@@ -501,16 +511,25 @@ export const recalculateCustomerCommissionForOrder = async (orderId: string) => 
     } else {
       commission = 0;
     }
+    
     // 更新orders表
     await pool.query(
       `UPDATE orders SET customer_commission = ? WHERE order_id = ?`,
       [commission, orderId]
     );
-    // 同步到customer_orders表
-    await pool.query(
-      `UPDATE customer_orders SET customer_commission = ? WHERE order_id = ?`,
-      [commission, orderId]
-    );
+    
+    // 同步到customer_orders表，并设置结算状态
+    if (commission > 0) {
+      await pool.query(
+        `UPDATE customer_orders SET customer_commission = ?, settlement_status = 'settled' WHERE order_id = ?`,
+        [commission, orderId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE customer_orders SET customer_commission = ? WHERE order_id = ?`,
+        [commission, orderId]
+      );
+    }
   }
 };
 
@@ -521,9 +540,18 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
     const updateData: Record<string, any> = req.body
     const userId = (req as any).userId
 
+    // 查出原始 order_id，防止被绕过
+    const [originOrder]: any = await pool.query('SELECT order_id FROM customer_orders WHERE id = ?', [id]);
+    if (updateData.order_id && updateData.order_id !== originOrder[0].order_id) {
+      return res.status(403).json({
+        code: 1,
+        message: '订单号不允许修改，如需修改请删除后重新录入'
+      });
+    }
+
     // 检查订单是否存在
     const [orderInfo]: any = await pool.query(
-      'SELECT is_locked FROM customer_orders WHERE id = ?',
+      'SELECT is_locked, customer_id, fee, fee_2 FROM customer_orders WHERE id = ?',
       [id]
     )
 
@@ -531,6 +559,14 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
       return res.status(404).json({
         code: 1,
         message: '订单不存在'
+      })
+    }
+
+    // 基础权限控制：只有录入客服可以修改订单
+    if (orderInfo[0].customer_id !== userId) {
+      return res.status(403).json({
+        code: 1,
+        message: '只有录入客服可以修改订单'
       })
     }
 
@@ -567,6 +603,48 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
           message: '订单号已存在'
         })
       }
+    }
+
+    // 权限控制：只有录入客服可以修改订单，但订单号不允许修改
+    if (orderInfo[0].customer_id !== userId) {
+      return res.status(403).json({
+        code: 1,
+        message: '只有录入客服可以修改订单'
+      })
+    }
+
+    // 禁止修改订单号
+    if (updateData.order_id) {
+      return res.status(403).json({
+        code: 1,
+        message: '订单号不允许修改，如需修改请删除后重新录入'
+      })
+    }
+
+    // 稿费金额权限控制：修改定稿状态时的权限检查
+    if (updateData.hasOwnProperty('is_fixed')) {
+      const totalFee = Number(orderInfo[0].fee || 0) + Number(orderInfo[0].fee_2 || 0)
+      
+      if (totalFee >= 100) {
+        // 稿费 >= 100，只有管理/财务可以修改定稿状态
+        const [currentUser]: any = await pool.query(
+          `SELECT r.role_name 
+           FROM users u 
+           INNER JOIN roles r ON u.role_id = r.id 
+           WHERE u.id = ?`,
+          [userId]
+        )
+
+        if (currentUser.length === 0 || 
+            !(currentUser[0].role_name.includes('超级管理员') || 
+              currentUser[0].role_name.includes('财务'))) {
+          return res.status(403).json({
+            code: 1,
+            message: '稿费大于等于100的订单，只有管理/财务可以修改定稿状态'
+          })
+        }
+      }
+      // 稿费 < 100，客服可以修改定稿状态
     }
 
     // 检查派单编号唯一性（如果有填写）
@@ -746,7 +824,7 @@ export const deleteCustomerOrder = async (req: Request, res: Response) => {
 
     // 检查订单是否存在
     const [orderInfo]: any = await pool.query(
-      'SELECT is_locked FROM customer_orders WHERE id = ?',
+      'SELECT is_locked, customer_id FROM customer_orders WHERE id = ?',
       [id]
     )
 
@@ -754,6 +832,14 @@ export const deleteCustomerOrder = async (req: Request, res: Response) => {
       return res.status(404).json({
         code: 1,
         message: '订单不存在'
+      })
+    }
+
+    // 权限控制：只有录入客服可以删除订单
+    if (orderInfo[0].customer_id !== userId) {
+      return res.status(403).json({
+        code: 1,
+        message: '只有录入客服可以删除订单'
       })
     }
 
@@ -924,10 +1010,13 @@ export const mergeCustomerOrder = async (req: Request, res: Response) => {
         }
       })
 
-      // 佣金计算逻辑（新版）
+      // 佣金计算逻辑（新版）- 添加定稿状态判断
       const [orderDetailRows]: any = await pool.query(
-        `SELECT amount, refund_amount, fee, channel, status, customer_id, writer_id, writer_id_2, writer_fee, writer_fee_2, fee_per_1000
-         FROM orders WHERE order_id = ?`,
+        `SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
+                co.is_fixed
+         FROM orders o
+         LEFT JOIN customer_orders co ON o.order_id = co.order_id
+         WHERE o.order_id = ?`,
         [order.order_id]
       );
       const orderDetail = orderDetailRows[0];
@@ -944,9 +1033,11 @@ export const mergeCustomerOrder = async (req: Request, res: Response) => {
         const writerFee = Number(orderDetail.writer_fee || 0);
         const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
         const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
+        const isFixed = orderDetail.is_fixed === 1; // 是否定稿
+        
         // 参与计算的订单范围
         let eligible = false;
-        if (customerId && netIncome > 0) {
+        if (customerId && netIncome > 0 && isFixed) { // 添加定稿状态判断
           if (channel.includes('企业微信')) {
             eligible = true;
           } else if (channel.includes('支付宝') || channel.includes('淘宝') || channel.includes('天猫')) {
@@ -1051,9 +1142,10 @@ export const lockCustomerOrders = async (req: Request, res: Response) => {
       })
     }
 
-    // 检查订单是否存在且未被锁定
+    // 检查订单是否存在且符合锁定条件
     const [existingOrders]: any = await pool.query(
-      'SELECT id, order_id, is_locked FROM customer_orders WHERE id IN (?)',
+      `SELECT id, order_id, is_locked, is_fixed, settlement_status 
+       FROM customer_orders WHERE id IN (?)`,
       [order_ids]
     )
 
@@ -1070,6 +1162,24 @@ export const lockCustomerOrders = async (req: Request, res: Response) => {
       return res.status(400).json({
         code: 1,
         message: `以下订单已被锁定，无法重复锁定: ${lockedOrders.map((o: any) => o.order_id).join(', ')}`
+      })
+    }
+
+    // 检查是否有已结算的订单（不应该被锁定）
+    const settledOrders = existingOrders.filter((order: any) => order.settlement_status === 'settled')
+    if (settledOrders.length > 0) {
+      return res.status(400).json({
+        code: 1,
+        message: `以下订单已结算，无需锁定: ${settledOrders.map((o: any) => o.order_id).join(', ')}`
+      })
+    }
+
+    // 检查是否有未定稿的订单（建议不锁定）
+    const unfixedOrders = existingOrders.filter((order: any) => order.is_fixed !== 1)
+    if (unfixedOrders.length > 0) {
+      return res.status(400).json({
+        code: 1,
+        message: `以下订单未定稿，建议先定稿再锁定: ${unfixedOrders.map((o: any) => o.order_id).join(', ')}`
       })
     }
 
@@ -1132,7 +1242,8 @@ export const unlockCustomerOrders = async (req: Request, res: Response) => {
 
     // 检查订单是否存在且已被锁定
     const [existingOrders]: any = await pool.query(
-      'SELECT id, order_id, is_locked FROM customer_orders WHERE id IN (?)',
+      `SELECT id, order_id, is_locked, settlement_status 
+       FROM customer_orders WHERE id IN (?)`,
       [order_ids]
     )
 
@@ -1152,18 +1263,37 @@ export const unlockCustomerOrders = async (req: Request, res: Response) => {
       })
     }
 
-    // 批量解锁订单
-    await pool.query(
-      'UPDATE customer_orders SET is_locked = 0, locked_by = NULL, locked_at = NULL WHERE id IN (?)',
-      [order_ids]
-    )
+    // 自动解锁未结算的订单（保持已结算订单的锁定状态）
+    const ordersToUnlock = existingOrders.filter((order: any) => order.settlement_status !== 'settled')
+    const ordersToKeepLocked = existingOrders.filter((order: any) => order.settlement_status === 'settled')
+    
+    if (ordersToUnlock.length > 0) {
+      await pool.query(
+        'UPDATE customer_orders SET is_locked = 0, locked_by = NULL, locked_at = NULL WHERE id IN (?)',
+        [ordersToUnlock.map((o: any) => o.id)]
+      )
+    }
+
+    // 返回解锁结果
+    const unlockedCount = ordersToUnlock.length
+    const keptLockedCount = ordersToKeepLocked.length
+    
+    let message = '解锁成功'
+    if (keptLockedCount > 0) {
+      message = `解锁成功，${unlockedCount}个订单已解锁，${keptLockedCount}个已结算订单保持锁定状态`
+    }
 
     res.json({
       code: 0,
-      message: '解锁成功',
+      message: message,
       data: {
-        unlocked_count: order_ids.length,
-        unlocked_orders: existingOrders.map((order: any) => ({
+        unlocked_count: unlockedCount,
+        kept_locked_count: keptLockedCount,
+        unlocked_orders: ordersToUnlock.map((order: any) => ({
+          id: order.id,
+          order_id: order.order_id
+        })),
+        kept_locked_orders: ordersToKeepLocked.map((order: any) => ({
           id: order.id,
           order_id: order.order_id
         }))
@@ -1290,10 +1420,13 @@ export const autoMergeCustomerOrder = async () => {
         }
       })
 
-      // 佣金计算逻辑（新版）
+      // 佣金计算逻辑（新版）- 添加定稿状态判断
       const [orderDetailRows]: any = await pool.query(
-        `SELECT amount, refund_amount, fee, channel, status, customer_id, writer_id, writer_id_2, writer_fee, writer_fee_2, fee_per_1000
-         FROM orders WHERE order_id = ?`,
+        `SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
+                co.is_fixed
+         FROM orders o
+         LEFT JOIN customer_orders co ON o.order_id = co.order_id
+         WHERE o.order_id = ?`,
         [order.order_id]
       );
       const orderDetail = orderDetailRows[0];
@@ -1310,9 +1443,11 @@ export const autoMergeCustomerOrder = async () => {
         const writerFee = Number(orderDetail.writer_fee || 0);
         const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
         const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
+        const isFixed = orderDetail.is_fixed === 1; // 是否定稿
+        
         // 参与计算的订单范围
         let eligible = false;
-        if (customerId && netIncome > 0) {
+        if (customerId && netIncome > 0 && isFixed) { // 添加定稿状态判断
           if (channel.includes('企业微信')) {
             eligible = true;
           } else if (channel.includes('支付宝') || channel.includes('淘宝') || channel.includes('天猫')) {
@@ -1410,7 +1545,7 @@ export const exportCustomerCommission = async (req, res) => {
     }
     // 1. 查询所有明细订单
     const [orders]: any = await pool.query(
-      `SELECT co.id, co.order_id, co.date, co.customer_id, u.username AS customer_service_name, co.customer_commission,
+      `SELECT co.id, co.order_id, co.dispatch_id, co.date, co.customer_id, u.username AS customer_service_name, co.customer_commission,
               co.writer_id, w1.name AS writer_name, co.fee, w1.alipay_name AS writer_alipay_name, w1.alipay_account AS writer_alipay_account,
               co.writer_id_2, w2.name AS writer_name_2, co.fee_2, w2.alipay_name AS writer2_alipay_name, w2.alipay_account AS writer2_alipay_account
        FROM customer_orders co
@@ -1492,6 +1627,58 @@ export const exportCustomerCommission = async (req, res) => {
     });
   } catch (error) {
     console.error('Export customer commission error:', error);
+    res.status(500).json({ code: 1, message: '服务器错误' });
+  }
+}; 
+
+// 导出客服订单（支持日期区间、结算状态筛选、权限控制）
+export const exportCustomerOrders = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const { start, end, settlement_status } = req.query;
+    if (!start || !end) {
+      return res.status(400).json({ code: 1, message: '请提供导出时间周期（start, end）' });
+    }
+    // 查询当前用户角色
+    const [currentUser]: any = await pool.query(
+      `SELECT r.role_name FROM users u INNER JOIN roles r ON u.role_id = r.id WHERE u.id = ?`,
+      [userId]
+    );
+    if (!currentUser.length) {
+      return res.status(403).json({ code: 1, message: '无权限导出' });
+    }
+    const roleName = currentUser[0].role_name;
+    // 构建SQL
+    let sql = `SELECT co.id, co.order_id, co.dispatch_id, co.date, co.customer_id, u.username AS customer_service_name, co.order_amount, co.refund_amount, co.customer_commission, co.fee, co.fee_2, co.fee_per_1000, co.writer_id, w1.name AS writer_name, co.writer_id_2, w2.name AS writer_name_2, co.settlement_status FROM customer_orders co LEFT JOIN users u ON co.customer_id = u.id LEFT JOIN writer_info w1 ON co.writer_id = w1.writer_id LEFT JOIN writer_info w2 ON co.writer_id_2 = w2.writer_id WHERE co.date >= ? AND co.date <= ?`;
+    const params: any[] = [start, end];
+    // 权限控制
+    if (roleName.includes('客服') && !roleName.includes('超级管理员') && !roleName.includes('财务')) {
+      sql += ' AND co.customer_id = ?';
+      params.push(userId);
+    } else if (!(roleName.includes('超级管理员') || roleName.includes('财务'))) {
+      return res.status(403).json({ code: 1, message: '无权限导出' });
+    }
+    // 结算状态筛选
+    if (settlement_status === 'settled') {
+      sql += ' AND co.settlement_status = \'settled\'';
+    } else if (settlement_status === 'pending') {
+      sql += ' AND (co.settlement_status = \'pending\' OR co.settlement_status IS NULL)';
+    }
+    sql += ' ORDER BY co.date ASC, co.id ASC';
+    // 查询并处理数据
+    const [orders]: any = await pool.query(sql, params);
+    // 增加 is_settled 字段：只要 customer_commission 有值（非null、非空、非0、非0.00）即视为已结算
+    const result = Array.isArray(orders) ? orders.map((row: any) => ({
+      ...row,
+      is_settled: (row.customer_commission !== null && row.customer_commission !== '' && Number(row.customer_commission) !== 0 && Number(row.customer_commission) !== 0.00)
+    })) : [];
+    res.json({
+      code: 0,
+      data: { orders: result },
+      message: '导出成功'
+    });
+  } catch (error) {
+    console.error('[导出客服订单] error:', error);
     res.status(500).json({ code: 1, message: '服务器错误' });
   }
 }; 

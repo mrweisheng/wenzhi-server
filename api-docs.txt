@@ -839,6 +839,7 @@ POST /api/customer-orders/merge
   - 同时会同步写手佣金信息：第一个写手佣金(writer_fee)和第二个写手佣金(writer_fee_2)。
   - 支持增量更新：如果订单总表中缺少佣金信息，会自动从客服订单表同步。
   - 同步fee_per_1000字段：如果客服订单表有值，则同步到订单总表。
+  - **新增定稿状态判断**：只有客服订单表中is_fixed=1（已定稿）的订单才会参与佣金计算。
 响应:
   {
     code: 0,
@@ -863,7 +864,7 @@ POST /api/customer-orders/merge
 
 ### 6. 锁定客服订单
 POST /api/customer-orders/lock
-描述: 锁定客服订单，锁定后的订单只能由超级管理员和财务角色修改
+描述: 智能锁定客服订单，只锁定符合条件的订单
 权限: 仅限超级管理员和财务角色
 请求头:
   - Authorization: Bearer <token>
@@ -873,6 +874,10 @@ POST /api/customer-orders/lock
   {
     "order_ids": [1, 2, 3]
   }
+锁定条件:
+  - 订单必须已定稿 (is_fixed = 1)
+  - 订单未结算 (settlement_status = 'pending')
+  - 订单未被锁定 (is_locked = 0)
 响应:
   {
     code: 0,
@@ -905,12 +910,22 @@ POST /api/customer-orders/lock
 或
   {
     code: 1,
+    message: "以下订单已结算，无需锁定: 订单编号列表"
+  }
+或
+  {
+    code: 1,
+    message: "以下订单未定稿，建议先定稿再锁定: 订单编号列表"
+  }
+或
+  {
+    code: 1,
     message: "您没有权限执行此操作，仅限超级管理员和财务角色"
   }
 
 ### 7. 解锁客服订单
 POST /api/customer-orders/unlock
-描述: 解锁客服订单，解锁后恢复正常编辑权限
+描述: 智能解锁客服订单，只解锁未结算订单，保持已结算订单锁定状态
 权限: 仅限超级管理员和财务角色
 请求头:
   - Authorization: Bearer <token>
@@ -920,13 +935,23 @@ POST /api/customer-orders/unlock
   {
     "order_ids": [1, 2, 3]
   }
+解锁逻辑:
+  - 自动解锁未结算订单 (settlement_status = 'pending')
+  - 保持已结算订单锁定状态 (settlement_status = 'settled')
 响应:
   {
     code: 0,
-    message: "解锁成功",
+    message: "解锁成功，X个订单已解锁，Y个已结算订单保持锁定状态",
     data: {
       unlocked_count: 解锁订单数量,
+      kept_locked_count: 保持锁定订单数量,
       unlocked_orders: [
+        {
+          id: 订单ID,
+          order_id: 订单编号
+        }
+      ],
+      kept_locked_orders: [
         {
           id: 订单ID,
           order_id: 订单编号
@@ -1002,6 +1027,7 @@ POST /api/orders/recalculate-commission
 
 说明:
 - 该接口会对所有orders表订单按最新规则重算客服佣金，并同步到customer_orders表。
+- **新增定稿状态判断**：只有客服订单表中is_fixed=1（已定稿）的订单才会参与佣金计算。
 - 返回处理订单总数和部分示例数据。
 - 幂等安全，可多次调用。
 
@@ -1211,6 +1237,12 @@ PUT /api/customer-orders/:id
   - writer_id 非必填，如有填写，需为有效写手ID，否则返回"指定的写手不存在"。
   - writer_id_2 非必填，如有填写，需为有效写手ID，否则返回"指定的第二个写手不存在"。
   - order_id 必须唯一，否则返回"订单号已存在"。
+权限控制:
+  - 只有录入客服可以修改订单
+  - 订单号不允许修改，如需修改请删除后重新录入
+  - 定稿状态修改权限：
+    * 稿费 < 100：客服可以修改定稿状态
+    * 稿费 ≥ 100：只有管理/财务可以修改定稿状态
 响应:
   {
     code: 0,
@@ -1249,7 +1281,17 @@ PUT /api/customer-orders/:id
   或
   {
     code: 1,
-    message: "您没有权限执行此操作"
+    message: "只有录入客服可以修改订单"
+  }
+  或
+  {
+    code: 1,
+    message: "订单号不允许修改，如需修改请删除后重新录入"
+  }
+  或
+  {
+    code: 1,
+    message: "稿费大于等于100的订单，只有管理/财务可以修改定稿状态"
   }
 
 ### 5. 删除客服订单
@@ -1257,6 +1299,8 @@ DELETE /api/customer-orders/:id
 描述: 删除客服订单
 请求头:
   - Authorization: Bearer <token>
+权限控制:
+  - 只有录入客服可以删除订单
 响应:
   {
     code: 0,
@@ -1275,7 +1319,7 @@ DELETE /api/customer-orders/:id
   或
   {
     code: 1,
-    message: "您没有权限执行此操作"
+    message: "只有录入客服可以删除订单"
   }
 
 ### 6. 手动合并客服订单到订单总表
@@ -1336,6 +1380,7 @@ GET /api/customer-orders/export-commission-data
         {
           id: 订单ID,
           order_id: 订单编号,
+          dispatch_id: 派单编号, // 新增，客服录入，写手对账用
           date: 日期,
           customer_id: 客服ID,
           customer_service_name: 客服用户名,
@@ -1385,6 +1430,7 @@ GET /api/customer-orders/export-commission-data
 - 只统计customer_commission非0/非0.00/非NULL/非空的订单，正负数都统计。
 - 写手汇总会合并写手1和写手2的所有稿费。
 - 前端可直接用返回数据生成csv/excel。
+- 响应的orders数据包含dispatch_id（派单编号）字段，并说明其含义。
 
 ## 九、写手评分管理模块
 
@@ -1736,3 +1782,42 @@ DELETE /api/cases/:id
     code: 1,
     message: "没有权限执行此操作，仅限超级管理员、主管、客服及质检人员"
   }
+
+API: /customer-orders/export
+方法: GET
+描述: 导出客服订单（支持日期区间、结算状态筛选、权限控制）
+请求参数:
+  - start: 字符串，必填，导出开始日期（yyyy-mm-dd）
+  - end: 字符串，必填，导出结束日期（yyyy-mm-dd）
+  - settlement_status: 字符串，可选，结算状态（all/settled/pending），默认all
+权限:
+  - 超级管理员、财务：可导出全部订单
+  - 客服：仅可导出自己录入的订单
+  - 其它角色：无权限
+响应:
+  - code: 状态码
+  - message: 描述信息
+  - data:
+      - orders: 订单明细数组，每条包含如下字段：
+          - id: 订单主键
+          - order_id: 订单编号
+          - dispatch_id: 派单编号
+          - date: 订单日期
+          - customer_id: 客服ID
+          - customer_service_name: 客服姓名
+          - writer_id: 写手业务编号
+          - writer_name: 写手姓名
+          - writer_id_2: 第二写手业务编号
+          - writer_name_2: 第二写手姓名
+          - order_amount: 订单下单金额
+          - refund_amount: 退款金额
+          - fee: 第一个写手稿费
+          - fee_2: 第二个写手稿费
+          - fee_per_1000: 每千字费用
+          - customer_commission: 客服佣金
+          - settlement_status: 结算状态
+          - is_settled: 是否已结算（只要 customer_commission 非null、非空、非0、非0.00 即视为已结算，布尔值）
+错误码:
+  - 400: 参数错误
+  - 403: 权限不足
+  - 500: 服务器错误

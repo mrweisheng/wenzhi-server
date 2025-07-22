@@ -339,9 +339,12 @@ const getCustomerOrderById = async (req, res) => {
 exports.getCustomerOrderById = getCustomerOrderById;
 // 提取单条订单佣金计算函数
 const recalculateCustomerCommissionForOrder = async (orderId) => {
-    // 查询订单详情
-    const [orderDetailRows] = await db_1.default.query(`SELECT amount, refund_amount, fee, channel, status, customer_id, writer_id, writer_id_2, writer_fee, writer_fee_2, fee_per_1000
-     FROM orders WHERE order_id = ?`, [orderId]);
+    // 查询订单详情（同时查询orders表和customer_orders表的定稿状态）
+    const [orderDetailRows] = await db_1.default.query(`SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
+            co.is_fixed
+     FROM orders o
+     LEFT JOIN customer_orders co ON o.order_id = co.order_id
+     WHERE o.order_id = ?`, [orderId]);
     const orderDetail = orderDetailRows[0];
     let commission = null;
     if (orderDetail) {
@@ -356,9 +359,10 @@ const recalculateCustomerCommissionForOrder = async (orderId) => {
         const writerFee = Number(orderDetail.writer_fee || 0);
         const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
         const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
+        const isFixed = orderDetail.is_fixed === 1; // 是否定稿
         // 参与计算的订单范围
         let eligible = false;
-        if (customerId && netIncome > 0) {
+        if (customerId && netIncome > 0 && isFixed) { // 添加定稿状态判断
             if (channel.includes('企业微信')) {
                 eligible = true;
             }
@@ -723,9 +727,12 @@ const mergeCustomerOrder = async (req, res) => {
                     fee_per_1000: needsFeePer1000Update
                 }
             });
-            // 佣金计算逻辑（新版）
-            const [orderDetailRows] = await db_1.default.query(`SELECT amount, refund_amount, fee, channel, status, customer_id, writer_id, writer_id_2, writer_fee, writer_fee_2, fee_per_1000
-         FROM orders WHERE order_id = ?`, [order.order_id]);
+            // 佣金计算逻辑（新版）- 添加定稿状态判断
+            const [orderDetailRows] = await db_1.default.query(`SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
+                co.is_fixed
+         FROM orders o
+         LEFT JOIN customer_orders co ON o.order_id = co.order_id
+         WHERE o.order_id = ?`, [order.order_id]);
             const orderDetail = orderDetailRows[0];
             let commission = null;
             if (orderDetail) {
@@ -740,9 +747,10 @@ const mergeCustomerOrder = async (req, res) => {
                 const writerFee = Number(orderDetail.writer_fee || 0);
                 const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
                 const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
+                const isFixed = orderDetail.is_fixed === 1; // 是否定稿
                 // 参与计算的订单范围
                 let eligible = false;
-                if (customerId && netIncome > 0) {
+                if (customerId && netIncome > 0 && isFixed) { // 添加定稿状态判断
                     if (channel.includes('企业微信')) {
                         eligible = true;
                     }
@@ -1034,9 +1042,12 @@ const autoMergeCustomerOrder = async () => {
                     fee_per_1000: needsFeePer1000Update
                 }
             });
-            // 佣金计算逻辑（新版）
-            const [orderDetailRows] = await db_1.default.query(`SELECT amount, refund_amount, fee, channel, status, customer_id, writer_id, writer_id_2, writer_fee, writer_fee_2, fee_per_1000
-         FROM orders WHERE order_id = ?`, [order.order_id]);
+            // 佣金计算逻辑（新版）- 添加定稿状态判断
+            const [orderDetailRows] = await db_1.default.query(`SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
+                co.is_fixed
+         FROM orders o
+         LEFT JOIN customer_orders co ON o.order_id = co.order_id
+         WHERE o.order_id = ?`, [order.order_id]);
             const orderDetail = orderDetailRows[0];
             let commission = null;
             if (orderDetail) {
@@ -1051,9 +1062,10 @@ const autoMergeCustomerOrder = async () => {
                 const writerFee = Number(orderDetail.writer_fee || 0);
                 const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
                 const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
+                const isFixed = orderDetail.is_fixed === 1; // 是否定稿
                 // 参与计算的订单范围
                 let eligible = false;
-                if (customerId && netIncome > 0) {
+                if (customerId && netIncome > 0 && isFixed) { // 添加定稿状态判断
                     if (channel.includes('企业微信')) {
                         eligible = true;
                     }

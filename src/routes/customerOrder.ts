@@ -10,13 +10,15 @@ import {
   mergeCustomerOrder,
   lockCustomerOrders,
   unlockCustomerOrders,
-  exportCustomerCommission
+  exportCustomerCommission,
+  exportCustomerOrders // 新增导出客服订单
 } from '../controllers/customerOrder'
 
 const router = express.Router()
 
 router.post('/', auth, createCustomerOrder)
 router.get('/export-commission-data', auth, exportCustomerCommission)
+router.get('/export', auth, exportCustomerOrders)
 router.get('/', auth, getCustomerOrders)
 router.get('/:id', auth, getCustomerOrderById)
 router.put('/:id', auth, updateCustomerOrder)
