@@ -16,7 +16,7 @@ import { errorHandler } from './middlewares/error'
 import { testConnection, query } from './config/db'
 import { log } from './config/logger'
 import morgan from 'morgan'
-import { scheduleCustomerOrderSync, initialCustomerOrderSync } from './scheduler'
+import { scheduleCustomerOrderSync, initialCustomerOrderSync, scheduleSettlementStatusSync } from './scheduler'
 
 const app = express()
 
@@ -105,6 +105,9 @@ const startServer = async () => {
       
       // 启动定时任务
       scheduleCustomerOrderSync()
+      
+      // 启动结算状态自动修正定时任务
+      scheduleSettlementStatusSync()
       
       // 执行初始同步
       initialCustomerOrderSync()

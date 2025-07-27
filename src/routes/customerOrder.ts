@@ -11,7 +11,8 @@ import {
   lockCustomerOrders,
   unlockCustomerOrders,
   exportCustomerCommission,
-  exportCustomerOrders // 新增导出客服订单
+  exportCustomerOrders, // 新增导出客服订单
+  updateSettlementStatus // 新增手动修改结算状态
 } from '../controllers/customerOrder'
 
 const router = express.Router()
@@ -28,5 +29,8 @@ router.post('/merge', auth, mergeCustomerOrder)
 // 锁定相关路由
 router.post('/lock', auth, checkCustomerOrderLockPermission, lockCustomerOrders)
 router.post('/unlock', auth, checkCustomerOrderLockPermission, unlockCustomerOrders)
+
+// 手动修改结算状态路由
+router.put('/settlement-status', auth, checkCustomerOrderLockPermission, updateSettlementStatus)
 
 export default router 

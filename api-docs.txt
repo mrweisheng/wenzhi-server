@@ -862,7 +862,59 @@ POST /api/customer-orders/merge
     message: "没有符合条件的订单需要合并"
   }
 
-### 6. 锁定客服订单
+### 7. 手动修改结算状态
+PUT /api/customer-orders/settlement-status
+描述: 手动修改客服订单的结算状态，仅限财务/超管操作
+权限: 仅限超级管理员和财务角色
+请求头:
+  - Authorization: Bearer <token>
+请求参数:
+  - order_id: 订单编号(必填)
+  - new_status: 新结算状态(必填，支持：WriterSettled/AllSettled)
+状态流转规则:
+  - SelfLocked → AllSettled
+  - Locked → WriterSettled 或 AllSettled
+  - WriterSettled → AllSettled
+  - AllSettled 不可修改（最终态）
+  - 不允许回退到未结算状态
+请求体示例:
+  {
+    "order_id": "4200002411202506272865982152",
+    "new_status": "WriterSettled"
+  }
+响应:
+  {
+    code: 0,
+    message: "结算状态修改成功",
+    data: {
+      order_id: "4200002411202506272865982152",
+      old_status: "Locked",
+      new_status: "WriterSettled",
+      updated_at: "2025-01-22T10:30:00.000Z"
+    }
+  }
+错误响应:
+  {
+    code: 1,
+    message: "您没有权限执行此操作，仅限超级管理员和财务角色"
+  }
+或
+  {
+    code: 1,
+    message: "请提供订单编号和新结算状态"
+  }
+或
+  {
+    code: 1,
+    message: "订单不存在"
+  }
+或
+  {
+    code: 1,
+    message: "不允许从 Locked 状态修改为 Pending 状态"
+  }
+
+### 8. 锁定客服订单
 POST /api/customer-orders/lock
 描述: 智能锁定客服订单，只锁定符合条件的订单
 权限: 仅限超级管理员和财务角色
@@ -936,8 +988,8 @@ POST /api/customer-orders/unlock
     "order_ids": [1, 2, 3]
   }
 解锁逻辑:
-  - 自动解锁未结算订单 (settlement_status = 'pending')
-  - 保持已结算订单锁定状态 (settlement_status = 'settled')
+  - 自动解锁 Locked 和 SelfLocked 状态的订单
+  - 保持 AllSettled 和 WriterSettled 状态订单锁定状态
 响应:
   {
     code: 0,
@@ -1157,6 +1209,7 @@ GET /api/customer-orders
   - fee_max: 稿费最大值(可选，总稿费 = 第一个写手稿费 + 第二个写手稿费)
   - order_amount_min: 订单金额最小值(可选)
   - order_amount_max: 订单金额最大值(可选)
+  - settlement_status: 结算状态(可选，支持：Pending/Eligible/Locked/SelfLocked/WriterSettled/AllSettled)
 响应:
   {
     code: 0,
@@ -1192,6 +1245,7 @@ GET /api/customer-orders
           locked_by: 锁定人ID,
           locked_at: 锁定时间,
           locked_by_name: 锁定人用户名,
+          settlement_status: 结算状态(Pending/Eligible/Locked/SelfLocked/WriterSettled/AllSettled),
           created_at: 记录创建时间,
           updated_at: 记录更新时间
         }
@@ -1360,7 +1414,7 @@ POST /api/customer-orders/merge
 
 ### 9. 导出客服佣金明细
 GET /api/customer-orders/export-commission-data
-描述: 导出指定时间周期内客服订单表每一条数据，包含客服佣金、写手稿费及写手支付宝信息等关键字段，并返回全局汇总、客服汇总、写手汇总。仅限超级管理员和财务角色。
+描述: 导出指定时间周期内客服订单表每一条数据，包含客服佣金、写手稿费及写手支付宝信息等关键字段，并返回全局汇总、客服汇总、写手汇总。仅限超级管理员和财务角色。支持防止重复导出机制。
 
 权限:
   - 仅限超级管理员和财务角色
@@ -1371,6 +1425,13 @@ GET /api/customer-orders/export-commission-data
 请求参数:
   - start: 开始日期(必填，格式YYYY-MM-DD)
   - end: 结束日期(必填，格式YYYY-MM-DD)
+  - settlement_status: 结算状态(可选，支持单选或多选，多个状态用英文逗号分隔，如 Eligible,Locked，支持值：Pending,Eligible,Locked,SelfLocked,WriterSettled,AllSettled)
+
+防止重复导出机制:
+  - 筛选Locked状态时：只导出writer_settlement_exported=0的订单（未导出写手打款）
+  - 筛选WriterSettled或SelfLocked状态时：只导出customer_settlement_exported=0的订单（未导出客服打款）
+  - 状态更新为WriterSettled时：自动设置writer_settlement_exported=1
+  - 状态更新为AllSettled时：自动设置customer_settlement_exported=1
 
 响应:
   {
@@ -1394,7 +1455,8 @@ GET /api/customer-orders/export-commission-data
           writer_name_2: 第二个写手姓名,
           fee_2: 第二个写手稿费,
           writer2_alipay_name: 第二个写手支付宝姓名,
-          writer2_alipay_account: 第二个写手支付宝账号
+          writer2_alipay_account: 第二个写手支付宝账号,
+          settlement_status: 结算状态(Pending/Eligible/Locked/SelfLocked/WriterSettled/AllSettled)
         },
         ...
       ],

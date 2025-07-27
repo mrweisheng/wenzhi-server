@@ -11,7 +11,7 @@
  Target Server Version : 80041 (8.0.41-0ubuntu0.20.04.1)
  File Encoding         : 65001
 
- Date: 22/07/2025 19:42:05
+ Date: 27/07/2025 11:49:07
 */
 
 SET NAMES utf8mb4;
@@ -70,7 +70,11 @@ CREATE TABLE `customer_orders`  (
   `locked_at` timestamp NULL DEFAULT NULL COMMENT '锁定时间',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '记录更新时间',
-  `settlement_status` enum('pending','settled') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT 'pending' COMMENT '结算状态：待结算/已结算',
+  `settlement_status` enum('Pending','Eligible','Locked','SelfLocked','WriterSettled','AllSettled') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT 'Pending' COMMENT '结算状态：Pending-未结算（初始状态，客服可编辑）；Eligible-可结算（已定稿且金额匹配，系统自动标记，客服仍可编辑）；Locked-待结算（财务/超管锁定普通订单，有写手，订单不可编辑）；SelfLocked-自写待结算（财务/超管锁定自写订单，无写手，订单不可编辑）；WriterSettled-老师已结算客服未结算（财务已给写手打款但未给客服结算，订单不可编辑）；AllSettled-老师已结算客服已结算（终态，完全冻结，任何人不可编辑）',
+  `writer_settlement_exported` tinyint(1) NULL DEFAULT 0 COMMENT '是否已导出写手打款(0-未导出,1-已导出)',
+  `customer_settlement_exported` tinyint(1) NULL DEFAULT 0 COMMENT '是否已导出客服打款(0-未导出,1-已导出)',
+  `settlement_updated_by` int NULL DEFAULT NULL COMMENT '结算状态更新人ID',
+  `settlement_updated_at` timestamp NULL DEFAULT NULL COMMENT '结算状态更新时间',
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `idx_order_id`(`order_id` ASC) USING BTREE,
   UNIQUE INDEX `idx_dispatch_id`(`dispatch_id` ASC) USING BTREE,
@@ -80,9 +84,13 @@ CREATE TABLE `customer_orders`  (
   INDEX `idx_writer_id_2`(`writer_id_2` ASC) USING BTREE,
   INDEX `idx_is_locked`(`is_locked` ASC) USING BTREE,
   INDEX `idx_locked_by`(`locked_by` ASC) USING BTREE,
+  INDEX `idx_writer_settlement_exported`(`writer_settlement_exported` ASC) USING BTREE,
+  INDEX `idx_customer_settlement_exported`(`customer_settlement_exported` ASC) USING BTREE,
+  INDEX `idx_settlement_updated_by`(`settlement_updated_by` ASC) USING BTREE,
   CONSTRAINT `fk_customer_order_customer` FOREIGN KEY (`customer_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT `fk_customer_order_locked_by` FOREIGN KEY (`locked_by`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE = InnoDB AUTO_INCREMENT = 1728 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客服填报订单表' ROW_FORMAT = Dynamic;
+  CONSTRAINT `fk_customer_order_locked_by` FOREIGN KEY (`locked_by`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT `fk_settlement_updated_by` FOREIGN KEY (`settlement_updated_by`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE = InnoDB AUTO_INCREMENT = 1852 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '客服填报订单表' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
 -- Table structure for issue_records
@@ -254,7 +262,7 @@ CREATE TABLE `users`  (
   UNIQUE INDEX `username`(`username` ASC) USING BTREE,
   INDEX `role_id`(`role_id` ASC) USING BTREE,
   CONSTRAINT `users_ibfk_1` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE = InnoDB AUTO_INCREMENT = 132 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
+) ENGINE = InnoDB AUTO_INCREMENT = 135 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
 -- Table structure for writer_info

@@ -1,6 +1,14 @@
 import { Request, Response } from 'express'
 import pool from '../config/db'
 
+/**
+ * 判断订单是否允许计算客服佣金
+ * 只有 SelfLocked 和 WriterSettled 状态的订单才允许计算佣金
+ */
+const isEligibleForCommissionCalculation = (settlementStatus: string): boolean => {
+  return settlementStatus === 'SelfLocked' || settlementStatus === 'WriterSettled';
+};
+
 // 创建客服订单
 export const createCustomerOrder = async (req: Request, res: Response) => {
   try {
@@ -137,7 +145,7 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
     // 处理退款金额：如果为空、undefined或null，设置为0.00
     const processedRefundAmount = (refund_amount === undefined || refund_amount === null || refund_amount === '') ? 0.00 : refund_amount;
 
-    // 创建订单，自动设置客服ID为当前用户ID
+    // 创建订单，自动设置客服ID为当前用户ID，默认状态为Pending
     const insertData: any = {
       order_id,
       date,
@@ -158,7 +166,8 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
       refund_amount: processedRefundAmount,
       special_situation,
       dispatch_id: dispatch_id || null,
-      fee_per_1000: (fee_per_1000 !== undefined && fee_per_1000 !== null && fee_per_1000 !== '') ? fee_per_1000 : null
+      fee_per_1000: (fee_per_1000 !== undefined && fee_per_1000 !== null && fee_per_1000 !== '') ? fee_per_1000 : null,
+      settlement_status: 'Pending' // 默认状态为未结算
     };
 
     const [result]: any = await pool.query(
@@ -196,6 +205,9 @@ export const createCustomerOrder = async (req: Request, res: Response) => {
       }
     }
 
+    // 创建订单后，自动检查是否满足"可结算"条件
+    await checkEligibleForSettlement(order_id);
+
     res.json({
       code: 0,
       message: '创建成功',
@@ -230,7 +242,8 @@ export const getCustomerOrders = async (req: Request, res: Response) => {
       fee_min,
       fee_max,
       order_amount_min,
-      order_amount_max
+      order_amount_max,
+      settlement_status
     } = req.query;
 
     const userId = (req as any).userId;
@@ -339,6 +352,10 @@ export const getCustomerOrders = async (req: Request, res: Response) => {
     if (order_amount_max) {
       sql += ' AND co.order_amount <= ?';
       params.push(Number(order_amount_max));
+    }
+    if (settlement_status) {
+      sql += ' AND co.settlement_status = ?';
+      params.push(settlement_status);
     }
 
     // 计算总数
@@ -456,17 +473,9 @@ export const recalculateCustomerCommissionForOrder = async (orderId: string) => 
   let commission = null;
   
   if (orderDetail) {
-    // 检查是否已结算，防止重复计算
-    if (orderDetail.settlement_status === 'settled') {
-      console.log(`订单 ${orderId} 已结算，跳过重复计算`);
-      return;
-    }
-    
     const amount = Number(orderDetail.amount || 0);
     const refund = Number(orderDetail.refund_amount || 0);
     const netIncome = amount - refund;
-    const channel = orderDetail.channel || '';
-    const status = orderDetail.status || '';
     const customerId = orderDetail.customer_id;
     const writerId = orderDetail.writer_id;
     const writerId2 = orderDetail.writer_id_2;
@@ -474,11 +483,11 @@ export const recalculateCustomerCommissionForOrder = async (orderId: string) => 
     const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
     const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
     const isFixed = orderDetail.is_fixed === 1; // 是否定稿
+    const settlementStatus = orderDetail.settlement_status || 'Pending';
     
-    // 参与计算的订单范围 - 简化逻辑，只检查定稿状态
+    // 新的佣金计算条件：只有 SelfLocked 和 WriterSettled 状态的订单才计算佣金
     let eligible = false;
-    if (customerId && netIncome > 0 && isFixed) { // 只检查定稿状态，不检查orders表状态
-      // 所有渠道的订单，只要已定稿就参与计算
+    if (customerId && netIncome > 0 && isFixed && isEligibleForCommissionCalculation(settlementStatus)) {
       eligible = true;
     }
     
@@ -518,18 +527,11 @@ export const recalculateCustomerCommissionForOrder = async (orderId: string) => 
       [commission, orderId]
     );
     
-    // 同步到customer_orders表，并设置结算状态
-    if (commission > 0) {
-      await pool.query(
-        `UPDATE customer_orders SET customer_commission = ?, settlement_status = 'settled' WHERE order_id = ?`,
-        [commission, orderId]
-      );
-    } else {
-      await pool.query(
-        `UPDATE customer_orders SET customer_commission = ? WHERE order_id = ?`,
-        [commission, orderId]
-      );
-    }
+    // 同步到customer_orders表（不再自动设置settlement_status为settled）
+    await pool.query(
+      `UPDATE customer_orders SET customer_commission = ? WHERE order_id = ?`,
+      [commission, orderId]
+    );
   }
 };
 
@@ -801,6 +803,9 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
       }
       // 自动重算客服佣金
       await recalculateCustomerCommissionForOrder(orderId);
+      
+      // 更新订单后，自动检查是否满足"可结算"条件
+      await checkEligibleForSettlement(orderId);
     }
 
     res.json({
@@ -1010,10 +1015,10 @@ export const mergeCustomerOrder = async (req: Request, res: Response) => {
         }
       })
 
-      // 佣金计算逻辑（新版）- 添加定稿状态判断
+      // 佣金计算逻辑（新版）- 使用新的结算状态判断
       const [orderDetailRows]: any = await pool.query(
         `SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
-                co.is_fixed
+                co.is_fixed, co.settlement_status
          FROM orders o
          LEFT JOIN customer_orders co ON o.order_id = co.order_id
          WHERE o.order_id = ?`,
@@ -1025,8 +1030,6 @@ export const mergeCustomerOrder = async (req: Request, res: Response) => {
         const amount = Number(orderDetail.amount || 0);
         const refund = Number(orderDetail.refund_amount || 0);
         const netIncome = amount - refund;
-        const channel = orderDetail.channel || '';
-        const status = orderDetail.status || '';
         const customerId = orderDetail.customer_id;
         const writerId = orderDetail.writer_id;
         const writerId2 = orderDetail.writer_id_2;
@@ -1034,16 +1037,14 @@ export const mergeCustomerOrder = async (req: Request, res: Response) => {
         const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
         const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
         const isFixed = orderDetail.is_fixed === 1; // 是否定稿
+        const settlementStatus = orderDetail.settlement_status || 'Pending';
         
-        // 参与计算的订单范围
+        // 新的佣金计算条件：只有 SelfLocked 和 WriterSettled 状态的订单才计算佣金
         let eligible = false;
-        if (customerId && netIncome > 0 && isFixed) { // 添加定稿状态判断
-          if (channel.includes('企业微信')) {
-            eligible = true;
-          } else if (channel.includes('支付宝') || channel.includes('淘宝') || channel.includes('天猫')) {
-            if (status.includes('成功')) eligible = true;
-          }
+        if (customerId && netIncome > 0 && isFixed && isEligibleForCommissionCalculation(settlementStatus)) {
+          eligible = true;
         }
+        
         if (eligible) {
           const hasWriter = (writerId || writerId2) && (writerFee > 0 || writerFee2 > 0);
           const totalWriterFee = writerFee + writerFee2;
@@ -1183,11 +1184,24 @@ export const lockCustomerOrders = async (req: Request, res: Response) => {
       })
     }
 
-    // 批量锁定订单
-    await pool.query(
-      'UPDATE customer_orders SET is_locked = 1, locked_by = ?, locked_at = NOW() WHERE id IN (?)',
-      [userId, order_ids]
-    )
+    // 批量锁定订单，并根据是否有写手自动设置结算状态
+    for (const orderId of order_ids) {
+      // 查询订单是否有写手
+      const [orderInfo]: any = await pool.query(
+        'SELECT writer_id, writer_id_2 FROM customer_orders WHERE id = ?',
+        [orderId]
+      );
+      
+      if (orderInfo.length > 0) {
+        const hasWriter = orderInfo[0].writer_id || orderInfo[0].writer_id_2;
+        const newSettlementStatus = hasWriter ? 'Locked' : 'SelfLocked';
+        
+        await pool.query(
+          'UPDATE customer_orders SET is_locked = 1, locked_by = ?, locked_at = NOW(), settlement_status = ? WHERE id = ?',
+          [userId, newSettlementStatus, orderId]
+        );
+      }
+    }
 
     res.json({
       code: 0,
@@ -1263,14 +1277,26 @@ export const unlockCustomerOrders = async (req: Request, res: Response) => {
       })
     }
 
-    // 自动解锁未结算的订单（保持已结算订单的锁定状态）
-    const ordersToUnlock = existingOrders.filter((order: any) => order.settlement_status !== 'settled')
-    const ordersToKeepLocked = existingOrders.filter((order: any) => order.settlement_status === 'settled')
+    // 智能解锁订单，根据条件判断状态
+    const ordersToUnlock = existingOrders.filter((order: any) => 
+      order.settlement_status === 'Locked' || 
+      order.settlement_status === 'SelfLocked'
+    )
+    const ordersToKeepLocked = existingOrders.filter((order: any) => 
+      order.settlement_status === 'AllSettled' || 
+      order.settlement_status === 'WriterSettled'
+    )
     
     if (ordersToUnlock.length > 0) {
+      // 统一回退为 Pending
       await pool.query(
-        'UPDATE customer_orders SET is_locked = 0, locked_by = NULL, locked_at = NULL WHERE id IN (?)',
-        [ordersToUnlock.map((o: any) => o.id)]
+        'UPDATE customer_orders SET is_locked = 0, locked_by = NULL, locked_at = NULL, settlement_status = ?, customer_commission = 0 WHERE id IN (?)',
+        ['Pending', ordersToUnlock.map((o: any) => o.id)]
+      )
+      // 同步 orders 表的佣金为0
+      await pool.query(
+        'UPDATE orders SET customer_commission = 0 WHERE order_id IN (?)',
+        [ordersToUnlock.map((o: any) => o.order_id)]
       )
     }
 
@@ -1420,10 +1446,10 @@ export const autoMergeCustomerOrder = async () => {
         }
       })
 
-      // 佣金计算逻辑（新版）- 添加定稿状态判断
+      // 佣金计算逻辑（新版）- 使用新的结算状态判断
       const [orderDetailRows]: any = await pool.query(
         `SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
-                co.is_fixed
+                co.is_fixed, co.settlement_status
          FROM orders o
          LEFT JOIN customer_orders co ON o.order_id = co.order_id
          WHERE o.order_id = ?`,
@@ -1435,8 +1461,6 @@ export const autoMergeCustomerOrder = async () => {
         const amount = Number(orderDetail.amount || 0);
         const refund = Number(orderDetail.refund_amount || 0);
         const netIncome = amount - refund;
-        const channel = orderDetail.channel || '';
-        const status = orderDetail.status || '';
         const customerId = orderDetail.customer_id;
         const writerId = orderDetail.writer_id;
         const writerId2 = orderDetail.writer_id_2;
@@ -1444,16 +1468,14 @@ export const autoMergeCustomerOrder = async () => {
         const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
         const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
         const isFixed = orderDetail.is_fixed === 1; // 是否定稿
+        const settlementStatus = orderDetail.settlement_status || 'Pending';
         
-        // 参与计算的订单范围
+        // 新的佣金计算条件：只有 SelfLocked 和 WriterSettled 状态的订单才计算佣金
         let eligible = false;
-        if (customerId && netIncome > 0 && isFixed) { // 添加定稿状态判断
-          if (channel.includes('企业微信')) {
-            eligible = true;
-          } else if (channel.includes('支付宝') || channel.includes('淘宝') || channel.includes('天猫')) {
-            if (status.includes('成功')) eligible = true;
-          }
+        if (customerId && netIncome > 0 && isFixed && isEligibleForCommissionCalculation(settlementStatus)) {
+          eligible = true;
         }
+        
         if (eligible) {
           const hasWriter = (writerId || writerId2) && (writerFee > 0 || writerFee2 > 0);
           const totalWriterFee = writerFee + writerFee2;
@@ -1525,8 +1547,8 @@ export const autoMergeCustomerOrder = async () => {
 export const exportCustomerCommission = async (req, res) => {
   try {
     const userId = (req as any).userId;
-    const { start, end } = req.query;
-    console.log('[导出客服佣金] 入参:', { userId, start, end });
+    const { start, end, settlement_status } = req.query;
+    console.log('[导出客服佣金] 入参:', { userId, start, end, settlement_status });
     // 权限校验：仅限超级管理员和财务
     const [currentUser]: any = await pool.query(
       `SELECT r.role_name FROM users u INNER JOIN roles r ON u.role_id = r.id WHERE u.id = ?`,
@@ -1543,11 +1565,46 @@ export const exportCustomerCommission = async (req, res) => {
       console.log('[导出客服佣金] 缺少时间参数');
       return res.status(400).json({ code: 1, message: '请提供导出时间周期（start, end）' });
     }
-    // 1. 查询所有明细订单
+    // 解析结算状态参数
+    let statusSql = '';
+    let statusSqlNoAlias = '';
+    let statusParams: any[] = [];
+    if (settlement_status) {
+      const statusArr = String(settlement_status).split(',').map(s => s.trim()).filter(Boolean);
+      if (statusArr.length > 0) {
+        statusSql = ` AND co.settlement_status IN (${statusArr.map(() => '?').join(',')})`;
+        statusSqlNoAlias = ` AND settlement_status IN (${statusArr.map(() => '?').join(',')})`;
+        statusParams = statusArr;
+      }
+    }
+
+    // 添加防止重复导出的逻辑
+    let exportFilterSql = '';
+    let exportFilterSqlNoAlias = '';
+    let exportFilterParams: any[] = [];
+
+    // 根据结算状态添加导出标识筛选
+    if (settlement_status) {
+      const statusArr = String(settlement_status).split(',').map(s => s.trim()).filter(Boolean);
+      
+      // 写手打款筛选：Locked状态且未导出写手打款
+      if (statusArr.includes('Locked')) {
+        exportFilterSql += ` AND co.writer_settlement_exported = 0`;
+        exportFilterSqlNoAlias += ` AND writer_settlement_exported = 0`;
+      }
+      
+      // 客服打款筛选：WriterSettled和SelfLocked状态且未导出客服打款
+      if (statusArr.includes('WriterSettled') || statusArr.includes('SelfLocked')) {
+        exportFilterSql += ` AND co.customer_settlement_exported = 0`;
+        exportFilterSqlNoAlias += ` AND customer_settlement_exported = 0`;
+      }
+    }
+    // 1. 查询所有明细订单（有别名co.）
     const [orders]: any = await pool.query(
       `SELECT co.id, co.order_id, co.dispatch_id, co.date, co.customer_id, u.username AS customer_service_name, co.customer_commission,
               co.writer_id, w1.name AS writer_name, co.fee, w1.alipay_name AS writer_alipay_name, w1.alipay_account AS writer_alipay_account,
-              co.writer_id_2, w2.name AS writer_name_2, co.fee_2, w2.alipay_name AS writer2_alipay_name, w2.alipay_account AS writer2_alipay_account
+              co.writer_id_2, w2.name AS writer_name_2, co.fee_2, w2.alipay_name AS writer2_alipay_name, w2.alipay_account AS writer2_alipay_account,
+              co.settlement_status
        FROM customer_orders co
        LEFT JOIN users u ON co.customer_id = u.id
        LEFT JOIN writer_info w1 ON co.writer_id = w1.writer_id
@@ -1557,10 +1614,12 @@ export const exportCustomerCommission = async (req, res) => {
          AND co.customer_commission != ''
          AND co.customer_commission <> 0
          AND co.customer_commission <> 0.00
+         ${statusSql}
+         ${exportFilterSql}
        ORDER BY co.date ASC`,
-      [start, end]
+      [start, end, ...statusParams]
     );
-    // 2. 汇总全局总和
+    // 2. 汇总全局总和（无别名）
     const [summaryRows]: any = await pool.query(
       `SELECT COUNT(*) AS order_count,
               SUM(customer_commission) AS customer_commission_total,
@@ -1570,11 +1629,13 @@ export const exportCustomerCommission = async (req, res) => {
          AND customer_commission IS NOT NULL
          AND customer_commission != ''
          AND customer_commission <> 0
-         AND customer_commission <> 0.00`,
-      [start, end]
+         AND customer_commission <> 0.00
+         ${statusSqlNoAlias}
+         ${exportFilterSqlNoAlias}`,
+      [start, end, ...statusParams]
     );
     const summary = summaryRows[0] || { order_count: 0, customer_commission_total: 0, writer_fee_total: 0 };
-    // 3. 客服汇总
+    // 3. 客服汇总（有别名co.）
     const [customerSummary]: any = await pool.query(
       `SELECT co.customer_id, u.username AS customer_service_name,
               COUNT(*) AS order_count,
@@ -1586,10 +1647,12 @@ export const exportCustomerCommission = async (req, res) => {
          AND co.customer_commission != ''
          AND co.customer_commission <> 0
          AND co.customer_commission <> 0.00
+         ${statusSql}
+         ${exportFilterSql}
        GROUP BY co.customer_id, u.username`,
-      [start, end]
+      [start, end, ...statusParams]
     );
-    // 4. 写手汇总（合并写手1/2）
+    // 4. 写手汇总（合并写手1/2，无别名）
     const [writerSummary]: any = await pool.query(
       `SELECT w.writer_id, w.name AS writer_name, w.alipay_name, w.alipay_account,
               SUM(t.fee) AS writer_fee_total, COUNT(*) AS order_count
@@ -1601,6 +1664,8 @@ export const exportCustomerCommission = async (req, res) => {
            AND customer_commission <> 0
            AND customer_commission <> 0.00
            AND writer_id IS NOT NULL AND writer_id != ''
+           ${statusSqlNoAlias}
+           ${exportFilterSqlNoAlias}
          UNION ALL
          SELECT writer_id_2 AS writer_id, fee_2 AS fee FROM customer_orders
          WHERE date >= ? AND date <= ?
@@ -1609,12 +1674,14 @@ export const exportCustomerCommission = async (req, res) => {
            AND customer_commission <> 0
            AND customer_commission <> 0.00
            AND writer_id_2 IS NOT NULL AND writer_id_2 != ''
+           ${statusSqlNoAlias}
+           ${exportFilterSqlNoAlias}
        ) t
        LEFT JOIN writer_info w ON t.writer_id = w.writer_id
        GROUP BY w.writer_id, w.name, w.alipay_name, w.alipay_account
        HAVING writer_fee_total IS NOT NULL AND writer_fee_total != 0
        ORDER BY writer_fee_total DESC`,
-      [start, end, start, end]
+      [start, end, ...statusParams, start, end, ...statusParams]
     );
     res.json({
       code: 0,
@@ -1629,7 +1696,7 @@ export const exportCustomerCommission = async (req, res) => {
     console.error('Export customer commission error:', error);
     res.status(500).json({ code: 1, message: '服务器错误' });
   }
-}; 
+};
 
 // 导出客服订单（支持日期区间、结算状态筛选、权限控制）
 export const exportCustomerOrders = async (req: Request, res: Response) => {
@@ -1682,3 +1749,223 @@ export const exportCustomerOrders = async (req: Request, res: Response) => {
     res.status(500).json({ code: 1, message: '服务器错误' });
   }
 }; 
+
+// 自动检查订单是否满足"可结算"条件
+export const checkEligibleForSettlement = async (orderId: string) => {
+  try {
+    // 查询订单详情（同时查询orders表和customer_orders表）
+    const [orderDetailRows]: any = await pool.query(
+      `SELECT co.order_id, co.settlement_status, co.is_fixed, co.order_amount,
+              o.amount, o.refund_amount, o.channel, o.status
+       FROM customer_orders co
+       LEFT JOIN orders o ON co.order_id = o.order_id
+       WHERE co.order_id = ?`,
+      [orderId]
+    );
+    
+    if (orderDetailRows.length === 0) {
+      console.log(`订单 ${orderId} 不存在`);
+      return;
+    }
+    
+    const orderDetail = orderDetailRows[0];
+    
+    // 条件一：已定稿
+    const isFixed = orderDetail.is_fixed === 1;
+    
+    // 条件二：平台订单金额与客服录入金额一致
+    const platformAmount = Number(orderDetail.amount || 0);
+    const refundAmount = Number(orderDetail.refund_amount || 0);
+    const netPlatformAmount = platformAmount - refundAmount;
+    const customerAmount = Number(orderDetail.order_amount || 0);
+    
+    // 金额匹配（允许0.01的误差）
+    const amountMatch = Math.abs(netPlatformAmount - customerAmount) <= 0.01;
+    
+    // 同时满足两个条件
+    if (isFixed && amountMatch && orderDetail.settlement_status === 'Pending') {
+      // 自动将状态从Pending转为Eligible
+      await pool.query(
+        'UPDATE customer_orders SET settlement_status = ? WHERE order_id = ?',
+        ['Eligible', orderId]
+      );
+      console.log(`订单 ${orderId} 自动转为可结算状态`);
+    } else if (!isFixed || !amountMatch) {
+      // 如果不满足条件且当前状态是Eligible，则回退为Pending
+      if (orderDetail.settlement_status === 'Eligible') {
+        await pool.query(
+          'UPDATE customer_orders SET settlement_status = ? WHERE order_id = ?',
+          ['Pending', orderId]
+        );
+        console.log(`订单 ${orderId} 状态回退为未结算`);
+      }
+    }
+  } catch (error) {
+    console.error(`检查订单 ${orderId} 可结算状态时出错:`, error);
+  }
+}; 
+
+/**
+ * 批量修正所有满足条件的 Pending 订单为 Eligible
+ * 只处理 settlement_status = 'Pending' 的订单
+ * 每次处理100条，避免数据库压力
+ */
+export const batchFixEligibleStatus = async () => {
+  const pool = require('../config/db').default || require('../config/db');
+  const BATCH_SIZE = 100;
+  let offset = 0;
+  let totalFixed = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    // 查询一批 Pending 且已定稿的订单，且 orders 表有对应订单
+    const [pendingOrders]: any = await pool.query(
+      `SELECT co.id, co.order_id, co.order_amount, o.amount, co.is_fixed
+       FROM customer_orders co
+       LEFT JOIN orders o ON co.order_id = o.order_id
+       WHERE co.settlement_status = 'Pending'
+         AND co.is_fixed = 1
+         AND o.order_id IS NOT NULL
+       LIMIT ? OFFSET ?`,
+      [BATCH_SIZE, offset]
+    );
+
+    if (pendingOrders.length === 0) break;
+
+    for (const order of pendingOrders) {
+      // 金额一致判定
+      const amountMatch = Math.abs(Number(order.order_amount || 0) - Number(order.amount || 0)) < 0.01;
+      if (amountMatch) {
+        // 满足条件，更新为 Eligible
+        await pool.query(
+          `UPDATE customer_orders SET settlement_status = 'Eligible' WHERE id = ?`,
+          [order.id]
+        );
+        totalFixed++;
+      }
+    }
+
+    hasMore = pendingOrders.length === BATCH_SIZE;
+    offset += BATCH_SIZE;
+  }
+
+  console.log(`批量修正完成，共处理 ${totalFixed} 条订单`);
+  return totalFixed;
+};
+
+/**
+ * 手动修改结算状态
+ * 权限：仅限财务/超管
+ * 状态流转规则：
+ * - SelfLocked → AllSettled
+ * - Locked → WriterSettled 或 AllSettled
+ * - WriterSettled → AllSettled
+ * - AllSettled 不可修改（最终态）
+ */
+export const updateSettlementStatus = async (req: Request, res: Response) => {
+  try {
+    const { order_id, new_status } = req.body;
+    const userId = (req as any).userId;
+
+    // 权限校验：仅限超级管理员和财务
+    const [currentUser]: any = await pool.query(
+      `SELECT r.role_name FROM users u INNER JOIN roles r ON u.role_id = r.id WHERE u.id = ?`,
+      [userId]
+    );
+    if (
+      currentUser.length === 0 ||
+      !(currentUser[0].role_name.includes('超级管理员') || currentUser[0].role_name.includes('财务'))
+    ) {
+      return res.status(403).json({ 
+        code: 1, 
+        message: '您没有权限执行此操作，仅限超级管理员和财务角色' 
+      });
+    }
+
+    // 参数校验
+    if (!order_id || !new_status) {
+      return res.status(400).json({ 
+        code: 1, 
+        message: '请提供订单编号和新结算状态' 
+      });
+    }
+
+    // 查询当前订单状态
+    const [orderInfo]: any = await pool.query(
+      'SELECT id, settlement_status, writer_id, writer_id_2 FROM customer_orders WHERE order_id = ?',
+      [order_id]
+    );
+
+    if (orderInfo.length === 0) {
+      return res.status(404).json({ 
+        code: 1, 
+        message: '订单不存在' 
+      });
+    }
+
+    const currentStatus = orderInfo[0].settlement_status;
+    const hasWriter = orderInfo[0].writer_id || orderInfo[0].writer_id_2;
+
+    // 状态流转验证
+    const isValidTransition = (fromStatus: string, toStatus: string) => {
+      const validTransitions: Record<string, string[]> = {
+        'SelfLocked': ['AllSettled'],
+        'Locked': ['WriterSettled', 'AllSettled'],
+        'WriterSettled': ['AllSettled'],
+        'AllSettled': [] // 最终态，不可修改
+      };
+      
+      return validTransitions[fromStatus]?.includes(toStatus) || false;
+    };
+
+    if (!isValidTransition(currentStatus, new_status)) {
+      return res.status(400).json({ 
+        code: 1, 
+        message: `不允许从 ${currentStatus} 状态修改为 ${new_status} 状态` 
+      });
+    }
+
+    // 更新结算状态和标识
+    let updateQuery = 'UPDATE customer_orders SET settlement_status = ?, updated_at = NOW()';
+    let updateParams = [new_status];
+
+    // 根据新状态更新相应的导出标识
+    if (new_status === 'WriterSettled') {
+      updateQuery += ', writer_settlement_exported = 1, settlement_updated_by = ?, settlement_updated_at = NOW()';
+      updateParams.push(userId);
+    } else if (new_status === 'AllSettled') {
+      updateQuery += ', customer_settlement_exported = 1, settlement_updated_by = ?, settlement_updated_at = NOW()';
+      updateParams.push(userId);
+    } else {
+      // 其他状态只更新结算状态更新人信息
+      updateQuery += ', settlement_updated_by = ?, settlement_updated_at = NOW()';
+      updateParams.push(userId);
+    }
+
+    updateQuery += ' WHERE order_id = ?';
+    updateParams.push(order_id);
+
+    await pool.query(updateQuery, updateParams);
+
+    // 记录操作日志
+    console.log(`用户 ${userId} 将订单 ${order_id} 的结算状态从 ${currentStatus} 修改为 ${new_status}`);
+
+    res.json({
+      code: 0,
+      message: '结算状态修改成功',
+      data: {
+        order_id,
+        old_status: currentStatus,
+        new_status,
+        updated_at: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Update settlement status error:', error);
+    res.status(500).json({
+      code: 1,
+      message: '服务器错误'
+    });
+  }
+};

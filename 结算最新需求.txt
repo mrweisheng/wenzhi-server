@@ -1,0 +1,275 @@
+============================
+文智系统结算需求文档（已实现版本）
+
+【业务目标与背景】
+已实现订单结算全流程的自动与手动流转，提升结算准确性与操作便捷性。
+
+【结算状态定义】
+| 状态           | 英文值         | 说明                                   |
+|----------------|---------------|----------------------------------------|
+| 未结算         | Pending       | 初始状态，客服可编辑                   |
+| 可结算         | Eligible      | 已定稿且金额匹配，系统自动标记         |
+| 待结算         | Locked        | 财务/超管锁定普通订单，有写手，不可编辑|
+| 自写待结算     | SelfLocked    | 财务/超管锁定自写订单，无写手，不可编辑|
+| 老师已结算客服未结算 | WriterSettled | 财务已给写手打款但未给客服结算，不可编辑|
+| 老师已结算客服已结算 | AllSettled    | 终态，完全冻结，任何人不可编辑         |
+
+============================
+【已实现功能】
+
+1. 数据库结构调整 ✅
+- settlement_status 字段已扩展为六种状态
+- 现有数据迁移已完成（pending→Pending，settled→AllSettled）
+
+2. 订单主流程与状态流转 ✅
+
+【订单创建】
+- 订单创建时 settlement_status 默认 Pending
+- 订单编号、派单编号唯一性校验已实现
+- 无写手订单即为自写订单
+
+【定稿权限控制】
+- 稿费<100元：客服可定稿
+- 稿费≥100元：仅财务/超管可定稿
+
+【自动"可结算"判定】
+- 条件一：已定稿（is_fixed = 1）
+- 条件二：平台订单金额与客服录入金额一致（0.01元容差）
+- 满足后自动将 Pending → Eligible
+- 定时任务每天自动修正状态
+
+【锁定操作】
+- 财务/超管批量锁定 Eligible 订单：
+  - 有写手 → Locked
+  - 无写手 → SelfLocked
+- 锁定后不可编辑
+- 锁定为 SelfLocked 时立即触发佣金计算
+
+【解锁操作】
+- 财务/超管可对 Locked、SelfLocked 状态订单解锁
+- WriterSettled 状态不支持解锁，保持锁定状态
+- 解锁后 settlement_status 统一回退为 Pending，订单可编辑
+- 解锁时自动将客服佣金重置为0
+
+【手动修改结算状态】✅
+- 权限：仅限财务/超管操作
+- 状态流转规则：
+  * SelfLocked → AllSettled
+  * Locked → WriterSettled 或 AllSettled
+  * WriterSettled → AllSettled
+  * AllSettled 不可修改（最终态）
+  * 不允许回退到未结算状态
+- 操作记录：记录状态修改的操作人和时间
+
+3. 客服佣金计算逻辑优化 ✅
+
+【佣金计算前提条件】
+- 有客服ID（customer_id 不为空）
+- 净收入大于0（amount - refund_amount > 0）
+- 已定稿（is_fixed = 1）
+- 订单号同时存在于orders表和customer_orders表
+- **结算状态为 SelfLocked 或 WriterSettled**（新增核心条件）
+
+【佣金计算时机】
+- 锁定为 SelfLocked 时立即计算
+- 手动修改为 WriterSettled 时立即计算
+- 批量合并时按新规则计算
+- 全量重算时按新规则计算
+- 定时任务按新规则计算
+
+【佣金计算公式】（保持不变）
+- 无写手：佣金 = 净收入 × 0.42
+- 有写手：按复杂分支计算（与写手稿费、千字单价等相关）
+
+【佣金数据同步】
+- 同时更新 customer_orders 和 orders 两个表
+- 解锁时自动重置佣金为0
+
+4. 客服佣金导出与筛选功能优化 ✅
+- 导出客服佣金明细支持日期范围和结算状态筛选
+- 结算状态支持多选（Pending,Eligible,Locked,SelfLocked,WriterSettled,AllSettled）
+- 返回全局汇总、客服汇总、写手汇总
+
+5. 定时任务与自动化 ✅
+- 每小时自动同步客服订单到订单总表
+- 每天自动修正结算状态（Pending ↔ Eligible）
+- 服务启动时执行初始同步
+
+============================
+【API接口清单】
+
+【锁定相关】
+- POST /api/customer-orders/lock - 锁定订单
+- POST /api/customer-orders/unlock - 解锁订单
+- PUT /api/customer-orders/settlement-status - 手动修改结算状态
+
+【导出相关】
+- GET /api/customer-orders/export-commission-data - 导出客服佣金明细（支持结算状态筛选）
+- GET /api/customer-orders/export - 导出客服订单
+
+【重算相关】
+- POST /api/orders/recalculate-commission - 全量重算客服佣金
+
+【合并相关】
+- POST /api/customer-orders/merge - 手动合并客服订单
+
+【第二期新增接口】
+- PUT /api/customer-orders/batch-settlement-status - 批量更新结算状态（可选，暂时逐个修改）
+
+【已实现功能】
+- 防止重复导出机制：通过数据库标识字段控制
+- 状态更新时自动设置导出标识
+- 操作记录：记录状态变更的操作人和时间
+
+============================
+【技术实现要点】
+
+【佣金计算工具函数】
+```typescript
+const isEligibleForCommissionCalculation = (settlementStatus: string): boolean => {
+  return settlementStatus === 'SelfLocked' || settlementStatus === 'WriterSettled';
+};
+```
+
+【核心计算逻辑】
+- 只有 SelfLocked 和 WriterSettled 状态的订单才计算佣金
+- 其他状态（Pending、Eligible、Locked、AllSettled）不计算佣金
+- 解锁时自动重置佣金为0
+
+【异步处理机制】
+- 锁定操作立即返回结果
+- 佣金计算在后台异步进行
+- 用户刷新页面后看到最终佣金结果
+
+【防止重复导出机制】
+```sql
+-- 写手打款导出查询
+SELECT * FROM customer_orders 
+WHERE settlement_status = 'Locked' 
+  AND writer_settlement_exported = 0;
+
+-- 客服打款导出查询
+SELECT * FROM customer_orders 
+WHERE settlement_status IN ('WriterSettled', 'SelfLocked')
+  AND customer_settlement_exported = 0;
+```
+
+【状态更新时标识更新】
+- 更新为 WriterSettled 时：自动设置 writer_settlement_exported = 1
+- 更新为 AllSettled 时：自动设置 customer_settlement_exported = 1
+- 同时记录操作人和时间
+
+============================
+【用户体验】
+
+【锁定操作】
+- 点击锁定立即返回成功/失败结果
+- 状态立即变为 SelfLocked/Locked
+- 佣金计算在后台进行，不影响响应速度
+
+【佣金显示】
+- 锁定后可能需要刷新页面才能看到佣金
+- 佣金计算时间：通常1-30秒，取决于系统负载
+
+【状态流转】
+- Pending → Eligible：自动流转
+- Eligible → Locked/SelfLocked：手动锁定
+- Locked/SelfLocked → Pending：手动解锁
+- WriterSettled：不支持解锁，只能手动修改为 AllSettled
+- 手动修改：按规则流转到 WriterSettled/AllSettled
+
+============================
+【第二期建设内容】（已完成）✅
+
+【写手打款流程】✅
+- 筛选条件：结算状态为"待结算"的订单（排除"自写待结算"）
+- 导出功能：使用现有客服佣金导出API，筛选Locked状态且未导出标识的订单
+- 导出字段：包含写手稿费、支付宝信息等完整数据
+- 唯一标识：writer_settlement_exported=0的订单才可导出，防止重复导出和重复打款
+- 状态更新：打款完成后手动更新为"老师已结算客服未结算"
+- 标识更新：状态更新时自动设置writer_settlement_exported=1，记录操作人和时间
+- 操作记录：记录状态变更的操作人和时间
+
+【客服打款流程】✅
+- 筛选条件：结算状态为"老师已结算客服未结算"和"自写待结算"的订单
+- 导出功能：使用现有客服佣金导出API，筛选WriterSettled和SelfLocked状态且未导出标识的订单
+- 导出字段：包含客服佣金、写手信息等完整数据
+- 唯一标识：customer_settlement_exported=0的订单才可导出，防止重复导出和重复打款
+- 状态更新：打款完成后手动更新为"老师已结算客服已结算"
+- 标识更新：状态更新时自动设置customer_settlement_exported=1，记录操作人和时间
+- 彻底冻结：AllSettled状态后任何人无法进行任何修改
+
+【数据库字段新增】✅
+- writer_settlement_exported：是否已导出写手打款
+- customer_settlement_exported：是否已导出客服打款
+- settlement_updated_by：结算状态更新人ID
+- settlement_updated_at：结算状态更新时间
+
+【退款检测与处理】
+- 检测订单退款情况
+- 自动调整结算状态
+- 反向结算逻辑
+
+【批量操作优化】
+- 批量锁定/解锁性能优化
+- 大量订单处理时的进度显示
+
+【前端界面优化】
+- 实时佣金计算状态显示
+- 操作按钮权限与状态联动
+- 导出界面筛选条件优化
+
+============================
+【附录】
+
+【关键SQL】
+```sql
+-- 查询可结算订单
+SELECT * FROM customer_orders 
+WHERE is_fixed = 1 
+  AND ABS(order_amount - (SELECT amount FROM orders WHERE order_id = customer_orders.order_id)) < 0.01
+  AND settlement_status = 'Pending';
+
+-- 佣金计算条件
+SELECT * FROM customer_orders 
+WHERE settlement_status IN ('SelfLocked', 'WriterSettled')
+  AND is_fixed = 1;
+
+-- 写手打款导出查询（第二期）
+SELECT * FROM customer_orders 
+WHERE settlement_status = 'Locked' 
+  AND writer_settlement_exported = 0;
+
+-- 客服打款导出查询（第二期）
+SELECT * FROM customer_orders 
+WHERE settlement_status IN ('WriterSettled', 'SelfLocked')
+  AND customer_settlement_exported = 0;
+```
+
+【常见问题】
+Q: 为什么锁定后看不到佣金？
+A: 佣金计算在后台异步进行，请刷新页面查看结果。
+
+Q: 哪些状态会计算佣金？
+A: 只有 SelfLocked 和 WriterSettled 状态会计算佣金。
+
+Q: 解锁后佣金会怎样？
+A: 解锁后佣金会自动重置为0。
+
+Q: 哪些状态支持解锁？
+A: 只有 Locked 和 SelfLocked 状态支持解锁，WriterSettled 和 AllSettled 状态不支持解锁。
+
+Q: 如何手动修改结算状态？
+A: 使用 PUT /api/customer-orders/settlement-status 接口，仅限财务/超管操作。
+
+Q: 第二期的写手打款和客服打款流程是什么？
+A: 写手打款：筛选Locked状态且未导出标识的订单导出→人工打款→更新为WriterSettled并标记已导出；客服打款：筛选WriterSettled和SelfLocked状态且未导出标识的订单导出→人工打款→更新为AllSettled并标记已导出。
+
+Q: 如何防止重复导出和打款？
+A: 通过数据库字段writer_settlement_exported和customer_settlement_exported标识，只有未导出的订单才会出现在导出列表中，状态更新时自动标记为已导出，防止重复操作。
+
+Q: 状态更新时如何自动更新标识？
+A: 更新为WriterSettled时自动设置writer_settlement_exported=1，更新为AllSettled时自动设置customer_settlement_exported=1，同时记录操作人和时间。
+
+
+
