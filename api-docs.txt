@@ -1851,7 +1851,7 @@ API: /customer-orders/export
 请求参数:
   - start: 字符串，必填，导出开始日期（yyyy-mm-dd）
   - end: 字符串，必填，导出结束日期（yyyy-mm-dd）
-  - settlement_status: 字符串，可选，结算状态（all/settled/pending），默认all
+  - settlement_status: 字符串，可选，结算状态（支持：Pending/Eligible/Locked/SelfLocked/WriterSettled/AllSettled，多个状态用英文逗号分隔），默认全部
 权限:
   - 超级管理员、财务：可导出全部订单
   - 客服：仅可导出自己录入的订单

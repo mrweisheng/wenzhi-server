@@ -1726,10 +1726,12 @@ export const exportCustomerOrders = async (req: Request, res: Response) => {
       return res.status(403).json({ code: 1, message: '无权限导出' });
     }
     // 结算状态筛选
-    if (settlement_status === 'settled') {
-      sql += ' AND co.settlement_status = \'settled\'';
-    } else if (settlement_status === 'pending') {
-      sql += ' AND (co.settlement_status = \'pending\' OR co.settlement_status IS NULL)';
+    if (settlement_status) {
+      const statusArr = String(settlement_status).split(',').map(s => s.trim()).filter(Boolean);
+      if (statusArr.length > 0) {
+        sql += ` AND co.settlement_status IN (${statusArr.map(() => '?').join(',')})`;
+        params.push(...statusArr);
+      }
     }
     sql += ' ORDER BY co.date ASC, co.id ASC';
     // 查询并处理数据
