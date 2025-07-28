@@ -624,7 +624,7 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
     }
 
     // 稿费金额权限控制：修改定稿状态时的权限检查
-    if (updateData.hasOwnProperty('is_fixed')) {
+    if (updateData.hasOwnProperty('is_fixed') && updateData.is_fixed !== orderInfo[0].is_fixed) {
       const totalFee = Number(orderInfo[0].fee || 0) + Number(orderInfo[0].fee_2 || 0)
       
       if (totalFee >= 100) {
