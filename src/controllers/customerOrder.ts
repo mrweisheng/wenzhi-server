@@ -1309,6 +1309,8 @@ export const unlockCustomerOrders = async (req: Request, res: Response) => {
 
     // 智能解锁订单，根据条件判断状态
     const ordersToUnlock = existingOrders.filter((order: any) => 
+      order.settlement_status === 'Pending' ||
+      order.settlement_status === 'Eligible' ||
       order.settlement_status === 'Locked' || 
       order.settlement_status === 'SelfLocked'
     )

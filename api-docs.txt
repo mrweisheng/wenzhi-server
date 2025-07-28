@@ -961,7 +961,7 @@ POST /api/customer-orders/unlock
     "order_ids": [1, 2, 3]
   }
 解锁逻辑:
-  - 自动解锁 Locked 和 SelfLocked 状态的订单
+  - 自动解锁 Pending、Eligible、Locked 和 SelfLocked 状态的订单
   - 保持 AllSettled 和 WriterSettled 状态订单锁定状态
 响应:
   {
