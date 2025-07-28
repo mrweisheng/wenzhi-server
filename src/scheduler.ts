@@ -39,8 +39,8 @@ export const initialCustomerOrderSync = async () => {
 
 // 结算状态自动修正定时任务
 export const scheduleSettlementStatusSync = () => {
-  // 每天凌晨2点执行
-  const DAY_IN_MS = 24 * 60 * 60 * 1000;
+  // 每4小时执行一次
+  const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
   
   setInterval(async () => {
     try {
@@ -49,30 +49,33 @@ export const scheduleSettlementStatusSync = () => {
     } catch (error) {
       console.error('结算状态自动修正任务执行错误:', error);
     }
-  }, DAY_IN_MS);
+  }, FOUR_HOURS_MS);
   
-  console.log('结算状态自动修正任务已启动，每天凌晨2点执行一次');
+  console.log('结算状态自动修正任务已启动，每4小时执行一次');
 }
 
 // 自动修正结算状态
 export const autoFixSettlementStatus = async () => {
   const pool = require('./config/db').default || require('./config/db');
-  const BATCH_SIZE = 50; // 每批处理50条
+  const BATCH_SIZE = 100; // 增加批处理大小
   let offset = 0;
   let totalFixed = 0;
   let totalReverted = 0;
   let hasMore = true;
 
   console.log('开始自动修正结算状态...');
+  const startTime = Date.now();
 
   while (hasMore) {
-    // 查询最近7天的订单，分批处理
+    // 优化查询：只处理最近3天的订单，减少数据量
     const [orders] = await pool.query(
       `SELECT co.id, co.order_id, co.order_amount, co.settlement_status, co.is_fixed, o.amount
        FROM customer_orders co
        LEFT JOIN orders o ON co.order_id = o.order_id
-       WHERE co.date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+       WHERE co.date >= DATE_SUB(CURDATE(), INTERVAL 3 DAY)
          AND (co.settlement_status = 'Pending' OR co.settlement_status = 'Eligible')
+         AND co.is_fixed IS NOT NULL  -- 只处理有定稿状态的订单
+       ORDER BY co.date DESC  -- 优先处理最新订单
        LIMIT ? OFFSET ?`,
       [BATCH_SIZE, offset]
     );
@@ -82,33 +85,46 @@ export const autoFixSettlementStatus = async () => {
       break;
     }
 
+    // 批量更新，减少数据库交互次数
+    const eligibleUpdates = [];
+    const pendingUpdates = [];
+
     for (const order of orders) {
       const amountMatch = Math.abs(Number(order.order_amount || 0) - Number(order.amount || 0)) < 0.01;
       const isEligible = order.is_fixed === 1 && amountMatch && order.order_id;
 
       if (order.settlement_status === 'Pending' && isEligible) {
-        // Pending → Eligible
-        await pool.query(
-          'UPDATE customer_orders SET settlement_status = ? WHERE id = ?',
-          ['Eligible', order.id]
-        );
+        eligibleUpdates.push(order.id);
         totalFixed++;
-        console.log(`订单 ${order.order_id} 自动流转为 Eligible`);
       } else if (order.settlement_status === 'Eligible' && !isEligible) {
-        // Eligible → Pending (回退)
-        await pool.query(
-          'UPDATE customer_orders SET settlement_status = ? WHERE id = ?',
-          ['Pending', order.id]
-        );
+        pendingUpdates.push(order.id);
         totalReverted++;
-        console.log(`订单 ${order.order_id} 回退为 Pending`);
       }
+    }
+
+    // 批量更新 Eligible 状态
+    if (eligibleUpdates.length > 0) {
+      await pool.query(
+        'UPDATE customer_orders SET settlement_status = ? WHERE id IN (?)',
+        ['Eligible', eligibleUpdates]
+      );
+    }
+
+    // 批量更新 Pending 状态
+    if (pendingUpdates.length > 0) {
+      await pool.query(
+        'UPDATE customer_orders SET settlement_status = ? WHERE id IN (?)',
+        ['Pending', pendingUpdates]
+      );
     }
 
     hasMore = orders.length === BATCH_SIZE;
     offset += BATCH_SIZE;
   }
 
-  console.log(`自动修正完成：新增 Eligible ${totalFixed} 条，回退 Pending ${totalReverted} 条`);
-  return { totalFixed, totalReverted };
+  const endTime = Date.now();
+  const duration = endTime - startTime;
+  
+  console.log(`自动修正完成：新增 Eligible ${totalFixed} 条，回退 Pending ${totalReverted} 条，耗时 ${duration}ms`);
+  return { totalFixed, totalReverted, duration };
 } 

@@ -320,4 +320,29 @@ CREATE TABLE `writer_ratings`  (
   CONSTRAINT `fk_rating_writer` FOREIGN KEY (`writer_id`) REFERENCES `writer_info` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT
 ) ENGINE = InnoDB AUTO_INCREMENT = 3 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '写手评分表' ROW_FORMAT = Dynamic;
 
+-- 为 customer_orders 表添加结算相关标识字段
+ALTER TABLE customer_orders
+ADD COLUMN writer_settlement_exported TINYINT(1) DEFAULT 0 COMMENT '是否已导出写手打款(0-未导出,1-已导出)',
+ADD COLUMN customer_settlement_exported TINYINT(1) DEFAULT 0 COMMENT '是否已导出客服打款(0-未导出,1-已导出)',
+ADD COLUMN settlement_updated_by INT NULL COMMENT '结算状态更新人ID',
+ADD COLUMN settlement_updated_at TIMESTAMP NULL COMMENT '结算状态更新时间';
+
+-- 添加索引以提高查询性能
+ALTER TABLE customer_orders
+ADD INDEX idx_writer_settlement_exported (writer_settlement_exported),
+ADD INDEX idx_customer_settlement_exported (customer_settlement_exported),
+ADD INDEX idx_settlement_updated_by (settlement_updated_by);
+
+-- 添加外键约束（可选，确保数据完整性）
+ALTER TABLE customer_orders
+ADD CONSTRAINT fk_settlement_updated_by
+FOREIGN KEY (settlement_updated_by) REFERENCES `users` (`id`)
+ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- 性能优化索引：为定时任务查询优化
+ALTER TABLE customer_orders
+ADD INDEX idx_settlement_status_date (settlement_status, date),
+ADD INDEX idx_is_fixed_settlement_status (is_fixed, settlement_status),
+ADD INDEX idx_date_settlement_status (date, settlement_status);
+
 SET FOREIGN_KEY_CHECKS = 1;
