@@ -33,7 +33,7 @@ export const login = async (req: Request, res: Response) => {
     const accessToken = jwt.sign(
       { id: user.id },
       process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '2h' }  // 访问令牌2小时过期
+      { expiresIn: '24h' }  // 访问令牌24小时过期
     )
 
     const refreshToken = jwt.sign(
