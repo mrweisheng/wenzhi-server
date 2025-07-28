@@ -243,7 +243,8 @@ export const getCustomerOrders = async (req: Request, res: Response) => {
       fee_max,
       order_amount_min,
       order_amount_max,
-      settlement_status
+      settlement_status,
+      is_locked
     } = req.query;
 
     const userId = (req as any).userId;
@@ -356,6 +357,10 @@ export const getCustomerOrders = async (req: Request, res: Response) => {
     if (settlement_status) {
       sql += ' AND co.settlement_status = ?';
       params.push(settlement_status);
+    }
+    if (is_locked !== undefined) {
+      sql += ' AND co.is_locked = ?';
+      params.push(Number(is_locked));
     }
 
     // 计算总数

@@ -1210,6 +1210,7 @@ GET /api/customer-orders
   - order_amount_min: 订单金额最小值(可选)
   - order_amount_max: 订单金额最大值(可选)
   - settlement_status: 结算状态(可选，支持：Pending/Eligible/Locked/SelfLocked/WriterSettled/AllSettled)
+  - is_locked: 是否锁定(可选，0-未锁定，1-已锁定)
 响应:
   {
     code: 0,
