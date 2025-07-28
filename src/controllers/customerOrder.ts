@@ -553,7 +553,7 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
 
     // 检查订单是否存在
     const [orderInfo]: any = await pool.query(
-      'SELECT is_locked, customer_id, fee, fee_2 FROM customer_orders WHERE id = ?',
+      'SELECT is_locked, customer_id, fee, fee_2, is_fixed FROM customer_orders WHERE id = ?',
       [id]
     )
 
@@ -605,14 +605,6 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
           message: '订单号已存在'
         })
       }
-    }
-
-    // 权限控制：只有录入客服可以修改订单，但订单号不允许修改
-    if (orderInfo[0].customer_id !== userId) {
-      return res.status(403).json({
-        code: 1,
-        message: '只有录入客服可以修改订单'
-      })
     }
 
     // 禁止修改订单号
@@ -764,11 +756,31 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
     // 删除临时字段，防止拼进SQL
     delete updateData._writer_numeric_id;
     delete updateData._writer_numeric_id_2;
+    
+    // 删除order_id字段，防止订单号被修改
+    delete updateData.order_id;
+
+    // 字段验证和清理
+    const allowedFields = [
+      'date', 'is_fixed', 'order_content', 'word_count', 'fee', 'fee_2', 
+      'customer_id', 'writer_id', 'writer_id_2', 'exchange_time', 
+      'payment_channel', 'store_name', 'new_customer', 'customer_name', 
+      'order_amount', 'refund_amount', 'special_situation', 'dispatch_id',
+      'fee_per_1000'
+    ];
+    
+    // 只保留允许修改的字段
+    const filteredUpdateData: Record<string, any> = {};
+    for (const key of allowedFields) {
+      if (updateData.hasOwnProperty(key)) {
+        filteredUpdateData[key] = updateData[key];
+      }
+    }
 
     // 更新订单
     await pool.query(
       'UPDATE customer_orders SET ? WHERE id = ?',
-      [updateData, id]
+      [filteredUpdateData, id]
     )
 
     // 自动同步稿费等字段到 orders 表
