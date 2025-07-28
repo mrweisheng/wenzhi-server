@@ -846,7 +846,7 @@ export const deleteCustomerOrder = async (req: Request, res: Response) => {
 
     // 检查订单是否存在
     const [orderInfo]: any = await pool.query(
-      'SELECT is_locked, customer_id FROM customer_orders WHERE id = ?',
+      'SELECT is_locked, customer_id, order_id, settlement_status FROM customer_orders WHERE id = ?',
       [id]
     )
 
@@ -857,38 +857,51 @@ export const deleteCustomerOrder = async (req: Request, res: Response) => {
       })
     }
 
-    // 权限控制：只有录入客服可以删除订单
-    if (orderInfo[0].customer_id !== userId) {
+    // 权限控制：只有超级管理员可以删除订单
+    const [currentUser]: any = await pool.query(
+      `SELECT r.role_name 
+       FROM users u 
+       INNER JOIN roles r ON u.role_id = r.id 
+       WHERE u.id = ?`,
+      [userId]
+    )
+
+    if (currentUser.length === 0 || 
+        !currentUser[0].role_name.includes('超级管理员')) {
       return res.status(403).json({
         code: 1,
-        message: '只有录入客服可以删除订单'
+        message: '只有超级管理员可以删除客服订单'
       })
     }
 
-    // 如果订单被锁定，检查用户权限
-    if (orderInfo[0].is_locked) {
-      const [currentUser]: any = await pool.query(
-        `SELECT r.role_name 
-         FROM users u 
-         INNER JOIN roles r ON u.role_id = r.id 
-         WHERE u.id = ?`,
-        [userId]
-      )
-
-      if (currentUser.length === 0 || 
-          !(currentUser[0].role_name.includes('超级管理员') || 
-            currentUser[0].role_name.includes('财务'))) {
-        return res.status(403).json({
-          code: 1,
-          message: '订单已被锁定，仅限超级管理员和财务角色可以删除'
-        })
-      }
+    // 检查结算状态：只有Pending和Eligible状态的订单可以删除
+    const settlementStatus = orderInfo[0].settlement_status;
+    if (settlementStatus !== 'Pending' && settlementStatus !== 'Eligible') {
+      return res.status(403).json({
+        code: 1,
+        message: '只有未结算状态的订单可以删除'
+      })
     }
 
-    // 删除订单
+    // 检查是否被锁定：锁定的订单不允许删除
+    if (orderInfo[0].is_locked) {
+      return res.status(403).json({
+        code: 1,
+        message: '已锁定的订单不允许删除'
+      })
+    }
+
+    // 删除客服订单
     await pool.query(
       'DELETE FROM customer_orders WHERE id = ?',
       [id]
+    )
+
+    // 同步删除orders表中的对应记录（如果存在）
+    const orderId = orderInfo[0].order_id;
+    await pool.query(
+      'DELETE FROM orders WHERE order_id = ?',
+      [orderId]
     )
 
     res.json({

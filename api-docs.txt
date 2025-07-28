@@ -799,33 +799,7 @@ PUT /api/orders/:orderId/writer
     message: "您没有权限执行此操作"
   }
 
-### 4. 删除客服订单
-DELETE /api/customer-orders/:id
-描述: 删除客服订单
-请求头:
-  - Authorization: Bearer <token>
-响应:
-  {
-    code: 0,
-    message: "删除成功"
-  }
-错误响应:
-  {
-    code: 1,
-    message: "订单不存在"
-  }
-  或
-  {
-    code: 1,
-    message: "订单已被锁定，仅限超级管理员和财务角色可以删除"
-  }
-  或
-  {
-    code: 1,
-    message: "您没有权限执行此操作"
-  }
-
-### 5. 手动合并客服订单到订单总表
+### 4. 手动合并客服订单到订单总表
 POST /api/customer-orders/merge
 描述: 手动触发将客服订单表中的客服ID和写手ID信息批量更新到订单总表中，处理所有符合条件的订单
 请求头:
@@ -839,7 +813,6 @@ POST /api/customer-orders/merge
   - 同时会同步写手佣金信息：第一个写手佣金(writer_fee)和第二个写手佣金(writer_fee_2)。
   - 支持增量更新：如果订单总表中缺少佣金信息，会自动从客服订单表同步。
   - 同步fee_per_1000字段：如果客服订单表有值，则同步到订单总表。
-  - **新增定稿状态判断**：只有客服订单表中is_fixed=1（已定稿）的订单才会参与佣金计算。
 响应:
   {
     code: 0,
@@ -862,7 +835,7 @@ POST /api/customer-orders/merge
     message: "没有符合条件的订单需要合并"
   }
 
-### 7. 手动修改结算状态
+### 5. 手动修改结算状态
 PUT /api/customer-orders/settlement-status
 描述: 手动修改客服订单的结算状态，仅限财务/超管操作
 权限: 仅限超级管理员和财务角色
@@ -1079,7 +1052,7 @@ POST /api/orders/recalculate-commission
 
 说明:
 - 该接口会对所有orders表订单按最新规则重算客服佣金，并同步到customer_orders表。
-- **新增定稿状态判断**：只有客服订单表中is_fixed=1（已定稿）的订单才会参与佣金计算。
+- **定稿状态判断**：只有客服订单表中is_fixed=1（已定稿）的订单才会参与佣金计算。
 - 返回处理订单总数和部分示例数据。
 - 幂等安全，可多次调用。
 
@@ -1355,7 +1328,9 @@ DELETE /api/customer-orders/:id
 请求头:
   - Authorization: Bearer <token>
 权限控制:
-  - 只有录入客服可以删除订单
+  - 只有超级管理员可以删除客服订单
+  - 只有未结算状态的订单可以删除（Pending/Eligible）
+  - 已锁定的订单不允许删除
 响应:
   {
     code: 0,
@@ -1369,51 +1344,20 @@ DELETE /api/customer-orders/:id
   或
   {
     code: 1,
-    message: "订单已被锁定，仅限超级管理员和财务角色可以删除"
+    message: "只有超级管理员可以删除客服订单"
   }
   或
   {
     code: 1,
-    message: "只有录入客服可以删除订单"
+    message: "只有未结算状态的订单可以删除"
   }
-
-### 6. 手动合并客服订单到订单总表
-POST /api/customer-orders/merge
-描述: 手动触发将客服订单表中的客服ID和写手ID信息批量更新到订单总表中，处理所有符合条件的订单
-请求头:
-  - Authorization: Bearer <token>
-请求参数:
-  无需参数，系统会自动处理所有符合条件的订单
-合并逻辑说明:
-  - 系统会查找所有 orders.customer_id 或 writer_id 为空的订单，批量用 customer_orders 的 customer_id、writer_id 进行同步。
-  - customer_id 一定同步，writer_id 仅在有值时同步（优先同步第一个写手）。
-  - 注意：订单总表(orders)现在支持两个写手，会同步第一个写手(writer_id)和第二个写手(writer_id_2)到订单总表。
-  - 同时会同步写手佣金信息：第一个写手佣金(writer_fee)和第二个写手佣金(writer_fee_2)。
-  - 支持增量更新：如果订单总表中缺少佣金信息，会自动从客服订单表同步。
-  - 同步fee_per_1000字段：如果客服订单表有值，则同步到订单总表。
-响应:
-  {
-    code: 0,
-    message: "合并成功",
-    data: {
-      total: 处理订单总数,
-      merged_orders: [
-        {
-          order_id: 订单编号,
-          customer_id: 客服ID,
-          writer_id: 第一个写手ID,
-          writer_id_2: 第二个写手ID
-        }
-      ]
-    }
-  }
-错误响应:
+  或
   {
     code: 1,
-    message: "没有符合条件的订单需要合并"
+    message: "已锁定的订单不允许删除"
   }
 
-### 9. 导出客服佣金明细
+### 6. 导出客服佣金明细
 GET /api/customer-orders/export-commission-data
 描述: 导出指定时间周期内客服订单表每一条数据，包含客服佣金、写手稿费及写手支付宝信息等关键字段，并返回全局汇总、客服汇总、写手汇总。仅限超级管理员和财务角色。支持防止重复导出机制。
 
