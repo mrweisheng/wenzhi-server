@@ -1790,41 +1790,96 @@ DELETE /api/cases/:id
     message: "没有权限执行此操作，仅限超级管理员、主管、客服及质检人员"
   }
 
-API: /customer-orders/export
-方法: GET
-描述: 导出客服订单（支持日期区间、结算状态筛选、权限控制）
-请求参数:
-  - start: 字符串，必填，导出开始日期（yyyy-mm-dd）
-  - end: 字符串，必填，导出结束日期（yyyy-mm-dd）
-  - settlement_status: 字符串，可选，结算状态（支持：Pending/Eligible/Locked/SelfLocked/WriterSettled/AllSettled，多个状态用英文逗号分隔），默认全部
+### 7. 导出客服订单
+GET /api/customer-orders/export
+描述: 导出客服订单（支持多种筛选条件、权限控制）
 权限:
   - 超级管理员、财务：可导出全部订单
   - 客服：仅可导出自己录入的订单
   - 其它角色：无权限
+
+请求头:
+  - Authorization: Bearer <token>
+
+请求参数:
+  - start: 字符串，必填，导出开始日期（yyyy-mm-dd）
+  - end: 字符串，必填，导出结束日期（yyyy-mm-dd）
+  - settlement_status: 字符串，可选，结算状态（支持：Pending/Eligible/Locked/SelfLocked/WriterSettled/AllSettled，多个状态用英文逗号分隔），默认全部
+  
+  // 新增筛选条件（与客服订单列表查询保持一致）
+  - order_id: 字符串，可选，订单编号（精确匹配）
+  - customer_id: 数字，可选，客服ID
+  - writer_id: 字符串，可选，写手ID（仅支持第一个写手）
+  - is_fixed: 数字，可选，是否定稿（0-未定稿，1-已定稿）
+  - dispatch_id: 字符串，可选，派单编号（精确匹配）
+  - customer_name: 字符串，可选，客户名称（模糊匹配）
+  - fee_min: 数字，可选，稿费最小值（总稿费 = 第一个写手稿费 + 第二个写手稿费）
+  - fee_max: 数字，可选，稿费最大值
+  - order_amount_min: 数字，可选，订单金额最小值
+  - order_amount_max: 数字，可选，订单金额最大值
+  - is_locked: 数字，可选，是否锁定（0-未锁定，1-已锁定）
+
 响应:
-  - code: 状态码
-  - message: 描述信息
-  - data:
-      - orders: 订单明细数组，每条包含如下字段：
-          - id: 订单主键
-          - order_id: 订单编号
-          - dispatch_id: 派单编号
-          - date: 订单日期
-          - customer_id: 客服ID
-          - customer_service_name: 客服姓名
-          - writer_id: 写手业务编号
-          - writer_name: 写手姓名
-          - writer_id_2: 第二写手业务编号
-          - writer_name_2: 第二写手姓名
-          - order_amount: 订单下单金额
-          - refund_amount: 退款金额
-          - fee: 第一个写手稿费
-          - fee_2: 第二个写手稿费
-          - fee_per_1000: 每千字费用
-          - customer_commission: 客服佣金
-          - settlement_status: 结算状态
-          - is_settled: 是否已结算（只要 customer_commission 非null、非空、非0、非0.00 即视为已结算，布尔值）
-错误码:
-  - 400: 参数错误
-  - 403: 权限不足
-  - 500: 服务器错误
+  {
+    code: 0,
+    data: {
+      orders: [
+        {
+          id: 订单主键,
+          order_id: 订单编号,
+          dispatch_id: 派单编号,
+          date: 订单日期,
+          customer_id: 客服ID,
+          customer_service_name: 客服姓名,
+          writer_id: 写手业务编号,
+          writer_name: 写手姓名,
+          writer_id_2: 第二写手业务编号,
+          writer_name_2: 第二写手姓名,
+          order_amount: 订单下单金额,
+          refund_amount: 退款金额,
+          fee: 第一个写手稿费,
+          fee_2: 第二个写手稿费,
+          fee_per_1000: 每千字费用,
+          customer_commission: 客服佣金,
+          settlement_status: 结算状态,
+          is_settled: 是否已结算（只要 customer_commission 非null、非空、非0、非0.00 即视为已结算，布尔值）,
+          is_fixed: 是否定稿,
+          is_locked: 是否锁定,
+          customer_name: 客户名称,
+          order_content: 稿件内容信息,
+          word_count: 稿件字数,
+          exchange_time: 交稿时间,
+          payment_channel: 付款渠道,
+          store_name: 店铺名或客户线下,
+          new_customer: 是否新客户,
+          special_situation: 特殊情况(不结算),
+          created_at: 记录创建时间,
+          updated_at: 记录更新时间
+        }
+      ]
+    },
+    message: "导出成功"
+  }
+
+错误响应:
+  {
+    code: 1,
+    message: "参数错误"
+  }
+或
+  {
+    code: 1,
+    message: "权限不足"
+  }
+或
+  {
+    code: 1,
+    message: "服务器错误"
+  }
+
+说明:
+- 所有筛选条件均为可选，不传则不进行该条件筛选
+- 日期筛选（start、end）为必填项，确保导出数据的时间范围
+- 权限控制保持不变，确保数据安全
+- 新增的筛选条件与客服订单列表查询接口完全一致，便于前端复用
+- 导出返回所有符合条件的订单，无分页限制

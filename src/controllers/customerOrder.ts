@@ -1734,10 +1734,27 @@ export const exportCustomerCommission = async (req, res) => {
 export const exportCustomerOrders = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
-    const { start, end, settlement_status } = req.query;
+    const { 
+      start, 
+      end, 
+      settlement_status,
+      order_id,
+      customer_id,
+      writer_id,
+      is_fixed,
+      dispatch_id,
+      customer_name,
+      fee_min,
+      fee_max,
+      order_amount_min,
+      order_amount_max,
+      is_locked
+    } = req.query;
+    
     if (!start || !end) {
       return res.status(400).json({ code: 1, message: '请提供导出时间周期（start, end）' });
     }
+    
     // 查询当前用户角色
     const [currentUser]: any = await pool.query(
       `SELECT r.role_name FROM users u INNER JOIN roles r ON u.role_id = r.id WHERE u.id = ?`,
@@ -1747,9 +1764,25 @@ export const exportCustomerOrders = async (req: Request, res: Response) => {
       return res.status(403).json({ code: 1, message: '无权限导出' });
     }
     const roleName = currentUser[0].role_name;
-    // 构建SQL
-    let sql = `SELECT co.id, co.order_id, co.dispatch_id, co.date, co.customer_id, u.username AS customer_service_name, co.order_amount, co.refund_amount, co.customer_commission, co.fee, co.fee_2, co.fee_per_1000, co.writer_id, w1.name AS writer_name, co.writer_id_2, w2.name AS writer_name_2, co.settlement_status FROM customer_orders co LEFT JOIN users u ON co.customer_id = u.id LEFT JOIN writer_info w1 ON co.writer_id = w1.writer_id LEFT JOIN writer_info w2 ON co.writer_id_2 = w2.writer_id WHERE co.date >= ? AND co.date <= ?`;
+    
+    // 构建SQL - 增加更多字段以支持新增的筛选条件
+    let sql = `
+      SELECT co.id, co.order_id, co.dispatch_id, co.date, co.customer_id, 
+             u.username AS customer_service_name, co.order_amount, co.refund_amount, 
+             co.customer_commission, co.fee, co.fee_2, co.fee_per_1000, 
+             co.writer_id, w1.name AS writer_name, co.writer_id_2, w2.name AS writer_name_2, 
+             co.settlement_status, co.is_fixed, co.is_locked, co.customer_name,
+             co.order_content, co.word_count, co.exchange_time, co.payment_channel,
+             co.store_name, co.new_customer, co.special_situation,
+             co.created_at, co.updated_at
+      FROM customer_orders co 
+      LEFT JOIN users u ON co.customer_id = u.id 
+      LEFT JOIN writer_info w1 ON co.writer_id = w1.writer_id 
+      LEFT JOIN writer_info w2 ON co.writer_id_2 = w2.writer_id 
+      WHERE co.date >= ? AND co.date <= ?
+    `;
     const params: any[] = [start, end];
+    
     // 权限控制
     if (roleName.includes('客服') && !roleName.includes('超级管理员') && !roleName.includes('财务')) {
       sql += ' AND co.customer_id = ?';
@@ -1757,6 +1790,53 @@ export const exportCustomerOrders = async (req: Request, res: Response) => {
     } else if (!(roleName.includes('超级管理员') || roleName.includes('财务'))) {
       return res.status(403).json({ code: 1, message: '无权限导出' });
     }
+    
+    // 新增筛选条件（与客服订单列表查询保持一致）
+    if (order_id) {
+      sql += ' AND co.order_id = ?';
+      params.push(order_id);
+    }
+    if (customer_id && !roleName.includes('客服')) { // 客服角色忽略customer_id参数
+      sql += ' AND co.customer_id = ?';
+      params.push(customer_id);
+    }
+    if (writer_id) {
+      sql += ' AND co.writer_id = ?';
+      params.push(writer_id);
+    }
+    if (is_fixed !== undefined) {
+      sql += ' AND co.is_fixed = ?';
+      params.push(is_fixed);
+    }
+    if (dispatch_id) {
+      sql += ' AND co.dispatch_id = ?';
+      params.push(dispatch_id);
+    }
+    if (customer_name) {
+      sql += ' AND co.customer_name LIKE ?';
+      params.push(`%${customer_name}%`);
+    }
+    if (fee_min) {
+      sql += ' AND (COALESCE(co.fee, 0) + COALESCE(co.fee_2, 0)) >= ?';
+      params.push(Number(fee_min));
+    }
+    if (fee_max) {
+      sql += ' AND (COALESCE(co.fee, 0) + COALESCE(co.fee_2, 0)) <= ?';
+      params.push(Number(fee_max));
+    }
+    if (order_amount_min) {
+      sql += ' AND co.order_amount >= ?';
+      params.push(Number(order_amount_min));
+    }
+    if (order_amount_max) {
+      sql += ' AND co.order_amount <= ?';
+      params.push(Number(order_amount_max));
+    }
+    if (is_locked !== undefined) {
+      sql += ' AND co.is_locked = ?';
+      params.push(Number(is_locked));
+    }
+    
     // 结算状态筛选
     if (settlement_status) {
       const statusArr = String(settlement_status).split(',').map(s => s.trim()).filter(Boolean);
@@ -1765,14 +1845,18 @@ export const exportCustomerOrders = async (req: Request, res: Response) => {
         params.push(...statusArr);
       }
     }
+    
     sql += ' ORDER BY co.date ASC, co.id ASC';
+    
     // 查询并处理数据
     const [orders]: any = await pool.query(sql, params);
+    
     // 增加 is_settled 字段：只要 customer_commission 有值（非null、非空、非0、非0.00）即视为已结算
     const result = Array.isArray(orders) ? orders.map((row: any) => ({
       ...row,
       is_settled: (row.customer_commission !== null && row.customer_commission !== '' && Number(row.customer_commission) !== 0 && Number(row.customer_commission) !== 0.00)
     })) : [];
+    
     res.json({
       code: 0,
       data: { orders: result },
