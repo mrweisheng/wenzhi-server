@@ -1982,7 +1982,7 @@ export const batchFixEligibleStatus = async () => {
  */
 export const updateSettlementStatus = async (req: Request, res: Response) => {
   try {
-    const { order_id, new_status } = req.body;
+    const { order_ids, new_status } = req.body;
     const userId = (req as any).userId;
 
     // 权限校验：仅限超级管理员和财务
@@ -2001,30 +2001,24 @@ export const updateSettlementStatus = async (req: Request, res: Response) => {
     }
 
     // 参数校验
-    if (!order_id || !new_status) {
+    if (!order_ids || !new_status) {
       return res.status(400).json({ 
         code: 1, 
-        message: '请提供订单编号和新结算状态' 
+        message: '请提供订单编号列表和新结算状态' 
       });
     }
 
-    // 查询当前订单状态
-    const [orderInfo]: any = await pool.query(
-      'SELECT id, settlement_status, writer_id, writer_id_2 FROM customer_orders WHERE order_id = ?',
-      [order_id]
-    );
-
-    if (orderInfo.length === 0) {
-      return res.status(404).json({ 
+    // 确保 order_ids 是数组
+    const orderIdArray = Array.isArray(order_ids) ? order_ids : [order_ids];
+    
+    if (orderIdArray.length === 0) {
+      return res.status(400).json({ 
         code: 1, 
-        message: '订单不存在' 
+        message: '订单编号列表不能为空' 
       });
     }
 
-    const currentStatus = orderInfo[0].settlement_status;
-    const hasWriter = orderInfo[0].writer_id || orderInfo[0].writer_id_2;
-
-    // 状态流转验证
+    // 状态流转验证函数
     const isValidTransition = (fromStatus: string, toStatus: string) => {
       const validTransitions: Record<string, string[]> = {
         'SelfLocked': ['AllSettled'],
@@ -2036,14 +2030,54 @@ export const updateSettlementStatus = async (req: Request, res: Response) => {
       return validTransitions[fromStatus]?.includes(toStatus) || false;
     };
 
-    if (!isValidTransition(currentStatus, new_status)) {
-      return res.status(400).json({ 
+    // 查询所有订单的当前状态
+    const placeholders = orderIdArray.map(() => '?').join(',');
+    const [orderInfoList]: any = await pool.query(
+      `SELECT id, order_id, settlement_status, writer_id, writer_id_2 
+       FROM customer_orders 
+       WHERE order_id IN (${placeholders})`,
+      orderIdArray
+    );
+
+    if (orderInfoList.length === 0) {
+      return res.status(404).json({ 
         code: 1, 
-        message: `不允许从 ${currentStatus} 状态修改为 ${new_status} 状态` 
+        message: '未找到任何有效订单' 
       });
     }
 
-    // 更新结算状态和标识
+    // 检查是否所有订单都存在
+    const foundOrderIds = orderInfoList.map((order: any) => order.order_id);
+    const notFoundOrderIds = orderIdArray.filter(id => !foundOrderIds.includes(id));
+    
+    if (notFoundOrderIds.length > 0) {
+      return res.status(404).json({ 
+        code: 1, 
+        message: `以下订单不存在: ${notFoundOrderIds.join(', ')}` 
+      });
+    }
+
+                    // 验证每个订单的状态流转是否有效 - 全有或全无策略
+                const invalidTransitions: string[] = [];
+
+                for (const order of orderInfoList) {
+                  if (!isValidTransition(order.settlement_status, new_status)) {
+                    invalidTransitions.push(`${order.order_id}(${order.settlement_status})`);
+                  }
+                }
+
+                // 如果有任何一个订单不符合条件，全部不修改
+                if (invalidTransitions.length > 0) {
+                  return res.status(400).json({
+                    code: 1,
+                    message: `批量修改失败：以下订单不允许修改为 ${new_status} 状态，所有订单均不修改: ${invalidTransitions.join(', ')}`
+                  });
+                }
+
+                // 所有订单都符合条件，进行批量更新
+                const allOrderIds = orderInfoList.map(order => order.order_id);
+                const updatePlaceholders = allOrderIds.map(() => '?').join(',');
+    
     let updateQuery = 'UPDATE customer_orders SET settlement_status = ?, updated_at = NOW()';
     let updateParams = [new_status];
 
@@ -2060,24 +2094,26 @@ export const updateSettlementStatus = async (req: Request, res: Response) => {
       updateParams.push(userId);
     }
 
-    updateQuery += ' WHERE order_id = ?';
-    updateParams.push(order_id);
+                    updateQuery += ` WHERE order_id IN (${updatePlaceholders})`;
+                updateParams.push(...allOrderIds);
 
-    await pool.query(updateQuery, updateParams);
+                await pool.query(updateQuery, updateParams);
 
-    // 记录操作日志
-    console.log(`用户 ${userId} 将订单 ${order_id} 的结算状态从 ${currentStatus} 修改为 ${new_status}`);
+                // 记录操作日志
+                console.log(`用户 ${userId} 批量修改订单结算状态: ${allOrderIds.join(', ')} 从原状态修改为 ${new_status}`);
 
-    res.json({
-      code: 0,
-      message: '结算状态修改成功',
-      data: {
-        order_id,
-        old_status: currentStatus,
-        new_status,
-        updated_at: new Date().toISOString()
-      }
-    });
+                res.json({
+                  code: 0,
+                  message: '批量结算状态修改成功',
+                  data: {
+                    total_orders: orderIdArray.length,
+                    success_orders: orderInfoList.length,
+                    failed_orders: 0,
+                    order_ids: allOrderIds,
+                    new_status,
+                    updated_at: new Date().toISOString()
+                  }
+                });
 
   } catch (error) {
     console.error('Update settlement status error:', error);

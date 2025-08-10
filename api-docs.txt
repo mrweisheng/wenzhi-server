@@ -835,14 +835,14 @@ POST /api/customer-orders/merge
     message: "没有符合条件的订单需要合并"
   }
 
-### 5. 手动修改结算状态
+### 5. 批量修改结算状态
 PUT /api/customer-orders/settlement-status
-描述: 手动修改客服订单的结算状态，仅限财务/超管操作
+描述: 批量修改客服订单的结算状态（全有或全无策略），仅限财务/超管操作
 权限: 仅限超级管理员和财务角色
 请求头:
   - Authorization: Bearer <token>
 请求参数:
-  - order_id: 订单编号(必填)
+  - order_ids: 订单编号列表(必填，支持单个字符串或字符串数组)
   - new_status: 新结算状态(必填，支持：WriterSettled/AllSettled)
 状态流转规则:
   - SelfLocked → AllSettled
@@ -850,22 +850,41 @@ PUT /api/customer-orders/settlement-status
   - WriterSettled → AllSettled
   - AllSettled 不可修改（最终态）
   - 不允许回退到未结算状态
-请求体示例:
+批量策略:
+  - 全有或全无：如果任何一个订单不符合状态流转条件，所有订单均不修改
+  - 只有所有订单都符合条件时，才会执行批量更新
+请求体示例(单个订单):
   {
-    "order_id": "4200002411202506272865982152",
+    "order_ids": "4200002411202506272865982152",
     "new_status": "WriterSettled"
+  }
+请求体示例(多个订单):
+  {
+    "order_ids": [
+      "4200002411202506272865982152",
+      "4200002411202506272865982153",
+      "4200002411202506272865982154"
+    ],
+    "new_status": "AllSettled"
   }
 响应:
   {
     code: 0,
-    message: "结算状态修改成功",
+    message: "批量结算状态修改成功",
     data: {
-      order_id: "4200002411202506272865982152",
-      old_status: "Locked",
-      new_status: "WriterSettled",
+      total_orders: 3,
+      success_orders: 3,
+      failed_orders: 0,
+      order_ids: [
+        "4200002411202506272865982152",
+        "4200002411202506272865982153",
+        "4200002411202506272865982154"
+      ],
+      new_status: "AllSettled",
       updated_at: "2025-01-22T10:30:00.000Z"
     }
   }
+注意: 在全有或全无策略下，success_orders 要么等于 total_orders（全部成功），要么为 0（全部失败）
 错误响应:
   {
     code: 1,
@@ -874,17 +893,27 @@ PUT /api/customer-orders/settlement-status
 或
   {
     code: 1,
-    message: "请提供订单编号和新结算状态"
+    message: "请提供订单编号列表和新结算状态"
   }
 或
   {
     code: 1,
-    message: "订单不存在"
+    message: "订单编号列表不能为空"
   }
 或
   {
     code: 1,
-    message: "不允许从 Locked 状态修改为 Pending 状态"
+    message: "未找到任何有效订单"
+  }
+或
+  {
+    code: 1,
+    message: "以下订单不存在: 4200002411202506272865982152, 4200002411202506272865982153"
+  }
+或
+  {
+    code: 1,
+    message: "批量修改失败：以下订单不允许修改为 AllSettled 状态，所有订单均不修改: 4200002411202506272865982152(Locked), 4200002411202506272865982153(AllSettled)"
   }
 
 ### 8. 锁定客服订单
