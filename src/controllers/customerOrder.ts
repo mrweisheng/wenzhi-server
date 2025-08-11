@@ -2123,3 +2123,147 @@ export const updateSettlementStatus = async (req: Request, res: Response) => {
     });
   }
 };
+
+/**
+ * 批量处理历史订单结算状态
+ * 权限：仅限财务/超管
+ * 功能：将指定时间范围内的符合条件的Pending订单自动变更为Eligible
+ */
+export const batchFixHistoricalSettlement = async (req: Request, res: Response) => {
+  try {
+    const { start_date, end_date } = req.body;
+    const userId = (req as any).userId;
+
+    // 权限校验：仅限超级管理员和财务
+    const [currentUser]: any = await pool.query(
+      `SELECT r.role_name FROM users u INNER JOIN roles r ON u.role_id = r.id WHERE u.id = ?`,
+      [userId]
+    );
+    if (
+      currentUser.length === 0 ||
+      !(currentUser[0].role_name.includes('超级管理员') || currentUser[0].role_name.includes('财务'))
+    ) {
+      return res.status(403).json({ 
+        code: 1, 
+        message: '您没有权限执行此操作，仅限超级管理员和财务角色' 
+      });
+    }
+
+    // 参数校验
+    if (!start_date || !end_date) {
+      return res.status(400).json({ 
+        code: 1, 
+        message: '请提供开始日期和结束日期' 
+      });
+    }
+
+    // 验证日期格式
+    const startDate = new Date(start_date);
+    const endDate = new Date(end_date);
+    
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      return res.status(400).json({ 
+        code: 1, 
+        message: '日期格式不正确，请使用YYYY-MM-DD格式' 
+      });
+    }
+
+    if (startDate > endDate) {
+      return res.status(400).json({ 
+        code: 1, 
+        message: '开始日期不能晚于结束日期' 
+      });
+    }
+
+    console.log(`开始批量处理历史订单结算状态: ${start_date} 至 ${end_date}`);
+
+    // 查询指定时间范围内的所有Pending订单
+    const [orders]: any = await pool.query(
+      `SELECT co.id, co.order_id, co.order_amount, co.settlement_status, co.is_fixed, co.date,
+              o.amount, o.refund_amount
+       FROM customer_orders co
+       LEFT JOIN orders o ON co.order_id = o.order_id
+       WHERE co.date >= ? AND co.date <= ?
+         AND co.settlement_status = 'Pending'
+         AND co.is_fixed = 1
+       ORDER BY co.date ASC`,
+      [start_date, end_date]
+    );
+
+    if (orders.length === 0) {
+      return res.json({
+        code: 0,
+        message: '指定时间范围内没有找到需要处理的订单',
+        data: {
+          total_orders: 0,
+          eligible_count: 0,
+          pending_count: 0,
+          date_range: { start_date, end_date }
+        }
+      });
+    }
+
+    let eligibleCount = 0;
+    let pendingCount = 0;
+    const eligibleUpdates = [];
+    const pendingUpdates = [];
+
+    // 逐个检查订单是否满足条件
+    for (const order of orders) {
+      // 计算金额匹配
+      const platformAmount = Number(order.amount || 0);
+      const refundAmount = Number(order.refund_amount || 0);
+      const netPlatformAmount = platformAmount - refundAmount;
+      const customerAmount = Number(order.order_amount || 0);
+      
+      // 金额匹配（允许0.01的误差）
+      const amountMatch = Math.abs(netPlatformAmount - customerAmount) <= 0.01;
+      
+      if (amountMatch) {
+        eligibleUpdates.push(order.id);
+        eligibleCount++;
+      } else {
+        pendingUpdates.push(order.id);
+        pendingCount++;
+      }
+    }
+
+    // 批量更新为Eligible
+    if (eligibleUpdates.length > 0) {
+      await pool.query(
+        'UPDATE customer_orders SET settlement_status = ?, settlement_updated_by = ?, settlement_updated_at = NOW() WHERE id IN (?)',
+        ['Eligible', userId, eligibleUpdates]
+      );
+    }
+
+    // 批量更新为Pending（保持原状态，但确保数据一致性）
+    if (pendingUpdates.length > 0) {
+      await pool.query(
+        'UPDATE customer_orders SET settlement_status = ?, settlement_updated_by = ?, settlement_updated_at = NOW() WHERE id IN (?)',
+        ['Pending', userId, pendingUpdates]
+      );
+    }
+
+    // 记录操作日志
+    console.log(`用户 ${userId} 批量处理历史订单结算状态: ${start_date} 至 ${end_date}, 处理 ${orders.length} 条订单, 变更为可结算 ${eligibleCount} 条`);
+
+    res.json({
+      code: 0,
+      message: '批量处理历史订单结算状态完成',
+      data: {
+        total_orders: orders.length,
+        eligible_count: eligibleCount,
+        pending_count: pendingCount,
+        date_range: { start_date, end_date },
+        processed_at: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Batch fix historical settlement error:', error);
+    res.status(500).json({
+      code: 1,
+      message: '服务器错误'
+    });
+  }
+};

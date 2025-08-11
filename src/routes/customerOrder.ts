@@ -12,7 +12,8 @@ import {
   unlockCustomerOrders,
   exportCustomerCommission,
   exportCustomerOrders, // 新增导出客服订单
-  updateSettlementStatus // 新增手动修改结算状态
+  updateSettlementStatus, // 新增手动修改结算状态
+  batchFixHistoricalSettlement // 新增批量处理历史订单结算状态
 } from '../controllers/customerOrder'
 
 const router = express.Router()
@@ -31,6 +32,10 @@ router.post('/unlock', auth, checkCustomerOrderLockPermission, unlockCustomerOrd
 
 // 手动修改结算状态路由 - 必须放在 /:id 路由之前
 router.put('/settlement-status', auth, checkCustomerOrderLockPermission, updateSettlementStatus)
+
+// 批量处理历史订单结算状态路由
+router.post('/batch-fix-settlement', auth, checkCustomerOrderLockPermission, batchFixHistoricalSettlement)
+
 router.put('/:id', auth, updateCustomerOrder)
 
 export default router 

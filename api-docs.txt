@@ -1912,3 +1912,68 @@ GET /api/customer-orders/export
 - 权限控制保持不变，确保数据安全
 - 新增的筛选条件与客服订单列表查询接口完全一致，便于前端复用
 - 导出返回所有符合条件的订单，无分页限制
+
+### 8. 批量处理历史订单结算状态
+POST /api/customer-orders/batch-fix-settlement
+描述: 批量处理指定时间范围内的历史订单结算状态，将符合条件的Pending订单自动变更为Eligible
+权限: 仅限超级管理员和财务角色
+
+请求头:
+  - Authorization: Bearer <token>
+  - Content-Type: application/json
+
+请求体:
+  {
+    "start_date": "2024-06-01",  // 必填，开始日期（YYYY-MM-DD格式）
+    "end_date": "2024-07-31"     // 必填，结束日期（YYYY-MM-DD格式）
+  }
+
+响应:
+  {
+    "code": 0,
+    "message": "批量处理历史订单结算状态完成",
+    "data": {
+      "total_orders": 150,           // 总处理订单数
+      "eligible_count": 120,         // 变更为可结算的订单数
+      "pending_count": 30,           // 保持未结算的订单数
+      "date_range": {
+        "start_date": "2024-06-01",
+        "end_date": "2024-07-31"
+      },
+      "processed_at": "2024-01-28T10:30:00.000Z"
+    }
+  }
+
+错误响应:
+  {
+    "code": 1,
+    "message": "您没有权限执行此操作，仅限超级管理员和财务角色"
+  }
+或
+  {
+    "code": 1,
+    "message": "请提供开始日期和结束日期"
+  }
+或
+  {
+    "code": 1,
+    "message": "日期格式不正确，请使用YYYY-MM-DD格式"
+  }
+或
+  {
+    "code": 1,
+    "message": "开始日期不能晚于结束日期"
+  }
+或
+  {
+    "code": 1,
+    "message": "服务器错误"
+  }
+
+说明:
+- 此接口用于批量处理历史订单的结算状态，主要解决定时任务只处理最近3天订单的问题
+- 处理条件：已定稿（is_fixed=1）且金额匹配的Pending订单
+- 金额匹配规则：|客服录入金额 - 平台订单金额| ≤ 0.01
+- 符合条件的订单自动变更为Eligible状态，不符合条件的保持Pending状态
+- 建议在处理大量历史数据时，分批处理不同时间段，避免单次处理时间过长
+- 处理结果会记录操作日志，包括处理人、处理时间、处理数量等信息
