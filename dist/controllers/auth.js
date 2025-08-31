@@ -26,7 +26,7 @@ const login = async (req, res) => {
             });
         }
         // 生成访问令牌和刷新令牌
-        const accessToken = jsonwebtoken_1.default.sign({ id: user.id }, process.env.JWT_SECRET || 'your-secret-key', { expiresIn: '2h' } // 访问令牌2小时过期
+        const accessToken = jsonwebtoken_1.default.sign({ id: user.id }, process.env.JWT_SECRET || 'your-secret-key', { expiresIn: '24h' } // 访问令牌24小时过期
         );
         const refreshToken = jsonwebtoken_1.default.sign({ id: user.id }, process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key', { expiresIn: '7d' } // 刷新令牌7天过期
         );

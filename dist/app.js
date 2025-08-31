@@ -98,6 +98,12 @@ const startServer = async () => {
             logger_1.log.info('服务器启动成功', { port: PORT });
             // 启动定时任务
             (0, scheduler_1.scheduleCustomerOrderSync)();
+            // 启动结算状态自动修正定时任务
+            (0, scheduler_1.scheduleSettlementStatusSync)();
+            // 启动遗漏订单检查定时任务
+            (0, scheduler_1.scheduleMissedOrderCheck)();
+            // 启动佣金修复定时任务
+            (0, scheduler_1.scheduleCommissionFix)();
             // 执行初始同步
             (0, scheduler_1.initialCustomerOrderSync)();
         });

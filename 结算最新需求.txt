@@ -1,5 +1,5 @@
 ============================
-文智系统结算需求文档（已实现版本）
+文知系统结算需求文档（已实现版本）
 
 【业务目标与背景】
 已实现订单结算全流程的自动与手动流转，提升结算准确性与操作便捷性。
@@ -99,9 +99,9 @@
 【API接口清单】
 
 【锁定相关】
-- POST /api/customer-orders/lock - 锁定订单
-- POST /api/customer-orders/unlock - 解锁订单
-- PUT /api/customer-orders/settlement-status - 手动修改结算状态
+- POST /api/customer-orders/lock - 锁定订单（支持批量）
+- POST /api/customer-orders/unlock - 解锁订单（支持批量）
+- PUT /api/customer-orders/settlement-status - 手动修改结算状态（支持单个和批量操作）
 
 【导出相关】
 - GET /api/customer-orders/export-commission-data - 导出客服佣金明细（支持结算状态筛选）
@@ -114,12 +114,13 @@
 - POST /api/customer-orders/merge - 手动合并客服订单
 
 【第二期新增接口】
-- PUT /api/customer-orders/batch-settlement-status - 批量更新结算状态（可选，暂时逐个修改）
+- PUT /api/customer-orders/settlement-status - 手动修改结算状态（支持单个和批量操作）
 
 【已实现功能】
 - 防止重复导出机制：通过数据库标识字段控制
 - 状态更新时自动设置导出标识
 - 操作记录：记录状态变更的操作人和时间
+- 批量操作支持：所有锁定、解锁、状态修改接口均支持批量操作，传入order_ids数组即可
 
 ============================
 【技术实现要点】

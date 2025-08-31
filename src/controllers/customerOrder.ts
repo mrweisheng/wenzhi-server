@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import pool from '../config/db'
+import { withTransaction } from '../utils/transaction'
 
 /**
  * 判断订单是否允许计算客服佣金
@@ -465,79 +466,82 @@ export const getCustomerOrderById = async (req: Request, res: Response) => {
 
 // 提取单条订单佣金计算函数
 export const recalculateCustomerCommissionForOrder = async (orderId: string) => {
-  // 查询订单详情（同时查询orders表和customer_orders表的定稿状态和结算状态）
-  const [orderDetailRows]: any = await pool.query(
-    `SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
-            co.is_fixed, co.settlement_status
-     FROM orders o
-     LEFT JOIN customer_orders co ON o.order_id = co.order_id
-     WHERE o.order_id = ?`,
-    [orderId]
-  );
-  const orderDetail = orderDetailRows[0];
-  let commission = null;
-  
-  if (orderDetail) {
-    const amount = Number(orderDetail.amount || 0);
-    const refund = Number(orderDetail.refund_amount || 0);
-    const netIncome = amount - refund;
-    const customerId = orderDetail.customer_id;
-    const writerId = orderDetail.writer_id;
-    const writerId2 = orderDetail.writer_id_2;
-    const writerFee = Number(orderDetail.writer_fee || 0);
-    const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
-    const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
-    const isFixed = orderDetail.is_fixed === 1; // 是否定稿
-    const settlementStatus = orderDetail.settlement_status || 'Pending';
+  // 使用事务确保两个表更新的原子性
+  await withTransaction(async (connection) => {
+    // 查询订单详情（同时查询orders表和customer_orders表的定稿状态和结算状态）
+    const [orderDetailRows]: any = await connection.query(
+      `SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
+              co.is_fixed, co.settlement_status
+       FROM orders o
+       LEFT JOIN customer_orders co ON o.order_id = co.order_id
+       WHERE o.order_id = ?`,
+      [orderId]
+    );
+    const orderDetail = orderDetailRows[0];
+    let commission = null;
     
-    // 新的佣金计算条件：只有 SelfLocked 和 WriterSettled 状态的订单才计算佣金
-    let eligible = false;
-    if (customerId && netIncome > 0 && isFixed && isEligibleForCommissionCalculation(settlementStatus)) {
-      eligible = true;
-    }
-    
-    if (eligible) {
-      const hasWriter = (writerId || writerId2) && (writerFee > 0 || writerFee2 > 0);
-      const totalWriterFee = writerFee + writerFee2;
-      // 没有写手
-      if (!hasWriter) {
-        commission = +(netIncome * 0.42).toFixed(2);
-      } else {
-        // 有写手
-        if (!feePer1000) {
-          // 未填写字数
-          commission = +(netIncome * 0.42 - totalWriterFee).toFixed(2);
+    if (orderDetail) {
+      const amount = Number(orderDetail.amount || 0);
+      const refund = Number(orderDetail.refund_amount || 0);
+      const netIncome = amount - refund;
+      const customerId = orderDetail.customer_id;
+      const writerId = orderDetail.writer_id;
+      const writerId2 = orderDetail.writer_id_2;
+      const writerFee = Number(orderDetail.writer_fee || 0);
+      const writerFee2 = Number(orderDetail.writer_fee_2 || 0);
+      const feePer1000 = Number(orderDetail.fee_per_1000 || 0);
+      const isFixed = orderDetail.is_fixed === 1; // 是否定稿
+      const settlementStatus = orderDetail.settlement_status || 'Pending';
+      
+      // 新的佣金计算条件：只有 SelfLocked 和 WriterSettled 状态的订单才计算佣金
+      let eligible = false;
+      if (customerId && netIncome > 0 && isFixed && isEligibleForCommissionCalculation(settlementStatus)) {
+        eligible = true;
+      }
+      
+      if (eligible) {
+        const hasWriter = (writerId || writerId2) && (writerFee > 0 || writerFee2 > 0);
+        const totalWriterFee = writerFee + writerFee2;
+        // 没有写手
+        if (!hasWriter) {
+          commission = +(netIncome * 0.42).toFixed(2);
         } else {
-          const commissionBase = netIncome * 0.42;
-          if (totalWriterFee < commissionBase) {
-            commission = +(commissionBase - totalWriterFee).toFixed(2);
-          } else if (totalWriterFee >= commissionBase && totalWriterFee <= netIncome * 0.5) {
-            if (feePer1000 >= 60) {
+          // 有写手
+          if (!feePer1000) {
+            // 未填写字数
+            commission = +(netIncome * 0.42 - totalWriterFee).toFixed(2);
+          } else {
+            const commissionBase = netIncome * 0.42;
+            if (totalWriterFee < commissionBase) {
               commission = +(commissionBase - totalWriterFee).toFixed(2);
-            } else {
-              commission = 5.00;
+            } else if (totalWriterFee >= commissionBase && totalWriterFee <= netIncome * 0.5) {
+              if (feePer1000 >= 60) {
+                commission = +(commissionBase - totalWriterFee).toFixed(2);
+              } else {
+                commission = 5.00;
+              }
+            } else if (totalWriterFee > netIncome * 0.5) {
+              commission = +(commissionBase - totalWriterFee).toFixed(2);
             }
-          } else if (totalWriterFee > netIncome * 0.5) {
-            commission = +(commissionBase - totalWriterFee).toFixed(2);
           }
         }
+      } else {
+        commission = 0;
       }
-    } else {
-      commission = 0;
+      
+      // 更新orders表
+      await connection.query(
+        `UPDATE orders SET customer_commission = ? WHERE order_id = ?`,
+        [commission, orderId]
+      );
+      
+      // 同步到customer_orders表（不再自动设置settlement_status为settled）
+      await connection.query(
+        `UPDATE customer_orders SET customer_commission = ? WHERE order_id = ?`,
+        [commission, orderId]
+      );
     }
-    
-    // 更新orders表
-    await pool.query(
-      `UPDATE orders SET customer_commission = ? WHERE order_id = ?`,
-      [commission, orderId]
-    );
-    
-    // 同步到customer_orders表（不再自动设置settlement_status为settled）
-    await pool.query(
-      `UPDATE customer_orders SET customer_commission = ? WHERE order_id = ?`,
-      [commission, orderId]
-    );
-  }
+  });
 };
 
 // 更新客服订单
@@ -941,119 +945,121 @@ export const mergeCustomerOrder = async (req: Request, res: Response) => {
       })
     }
 
-    // 查找所有符合条件的订单进行合并
-    // 条件：客服订单表中有记录，且订单总表中也有相同订单号的记录
-    // 且订单总表中客服ID或写手ID至少有一个为空，或者第二个写手需要更新，或者佣金需要更新
-    const [orderPairs]: any = await pool.query(
-      `SELECT co.order_id, co.customer_id, co.writer_id, co.writer_id_2, 
-              co.fee as writer_fee, co.fee_2 as writer_fee_2,
-              co.fee_per_1000,
-              w.id as writer_numeric_id, w2.id as writer_numeric_id_2,
-              w.writer_id as writer_biz_id, w2.writer_id as writer_biz_id_2,
-              o.customer_id as existing_customer_id, o.writer_id as existing_writer_id, o.writer_id_2 as existing_writer_id_2,
-              o.writer_fee as existing_writer_fee, o.writer_fee_2 as existing_writer_fee_2,
-              o.fee_per_1000 as existing_fee_per_1000
-       FROM customer_orders co
-       INNER JOIN orders o ON co.order_id = o.order_id
-       LEFT JOIN writer_info w ON co.writer_id = w.writer_id
-       LEFT JOIN writer_info w2 ON co.writer_id_2 = w2.writer_id
-       WHERE (o.customer_id IS NULL OR o.writer_id IS NULL OR 
-              (co.writer_id_2 IS NOT NULL AND o.writer_id_2 IS NULL) OR
-              (co.fee IS NOT NULL AND o.writer_fee IS NULL) OR
-              (co.fee_2 IS NOT NULL AND o.writer_fee_2 IS NULL) OR
-              (co.fee_per_1000 IS NOT NULL AND o.fee_per_1000 IS NULL))`
-    )
+    // 使用事务确保合并操作的原子性
+    const result = await withTransaction(async (connection) => {
+      // 查找所有符合条件的订单进行合并
+      // 条件：客服订单表中有记录，且订单总表中也有相同订单号的记录
+      // 且订单总表中客服ID或写手ID至少有一个为空，或者第二个写手需要更新，或者佣金需要更新
+      const [orderPairs]: any = await connection.query(
+        `SELECT co.order_id, co.customer_id, co.writer_id, co.writer_id_2, 
+                co.fee as writer_fee, co.fee_2 as writer_fee_2,
+                co.fee_per_1000,
+                w.id as writer_numeric_id, w2.id as writer_numeric_id_2,
+                w.writer_id as writer_biz_id, w2.writer_id as writer_biz_id_2,
+                o.customer_id as existing_customer_id, o.writer_id as existing_writer_id, o.writer_id_2 as existing_writer_id_2,
+                o.writer_fee as existing_writer_fee, o.writer_fee_2 as existing_writer_fee_2,
+                o.fee_per_1000 as existing_fee_per_1000
+         FROM customer_orders co
+         INNER JOIN orders o ON co.order_id = o.order_id
+         LEFT JOIN writer_info w ON co.writer_id = w.writer_id
+         LEFT JOIN writer_info w2 ON co.writer_id_2 = w2.writer_id
+         WHERE (o.customer_id IS NULL OR o.writer_id IS NULL OR 
+                (co.writer_id_2 IS NOT NULL AND o.writer_id_2 IS NULL) OR
+                (co.fee IS NOT NULL AND o.writer_fee IS NULL) OR
+                (co.fee_2 IS NOT NULL AND o.writer_fee_2 IS NULL) OR
+                (co.fee_per_1000 IS NOT NULL AND o.fee_per_1000 IS NULL))`
+      )
 
-    if (orderPairs.length === 0) {
-      return res.status(404).json({
-        code: 1,
-        message: '没有符合条件的订单需要合并'
-      })
-    }
-
-    // 批量更新所有需要合并的订单
-    const mergedOrders = []
-    const mergedOrderIds: number[] = [];
-    for (const order of orderPairs) {
-      // 检查需要更新哪些字段
-      const needsCustomerUpdate = !order.existing_customer_id && order.customer_id
-      const needsWriterUpdate = !order.existing_writer_id && order.writer_numeric_id
-      const needsWriter2Update = !order.existing_writer_id_2 && order.writer_numeric_id_2
-      const needsWriterFeeUpdate = !order.existing_writer_fee && order.writer_fee
-      const needsWriterFee2Update = !order.existing_writer_fee_2 && order.writer_fee_2
-      const needsFeePer1000Update = !order.existing_fee_per_1000 && order.fee_per_1000
-      
-      // 构建更新字段
-      const updateFields = []
-      const updateValues = []
-      
-      if (needsCustomerUpdate) {
-        updateFields.push('customer_id = ?')
-        updateValues.push(order.customer_id)
-      }
-      
-      if (needsWriterUpdate) {
-        updateFields.push('writer_id = ?')
-        updateValues.push(order.writer_numeric_id)
-      }
-      
-      if (needsWriter2Update) {
-        updateFields.push('writer_id_2 = ?')
-        updateValues.push(order.writer_numeric_id_2)
-      }
-      
-      if (needsWriterFeeUpdate) {
-        updateFields.push('writer_fee = ?')
-        updateValues.push(order.writer_fee)
-      }
-      
-      if (needsWriterFee2Update) {
-        updateFields.push('writer_fee_2 = ?')
-        updateValues.push(order.writer_fee_2)
-      }
-      
-      if (needsFeePer1000Update) {
-        updateFields.push('fee_per_1000 = ?')
-        updateValues.push(order.fee_per_1000)
-      }
-      
-      // 执行更新
-      if (updateFields.length > 0) {
-        updateValues.push(order.order_id)
-        await pool.query(
-          `UPDATE orders SET ${updateFields.join(', ')} WHERE order_id = ?`,
-          updateValues
-        )
-        mergedOrderIds.push(order.id)
-      }
-      
-      mergedOrders.push({
-        order_id: order.order_id,
-        customer_id: order.customer_id,
-        writer_id: order.writer_biz_id || null,
-        writer_id_2: order.writer_biz_id_2 || null,
-        writer_fee: order.writer_fee,
-        writer_fee_2: order.writer_fee_2,
-        fee_per_1000: order.fee_per_1000,
-        updated_fields: {
-          customer_id: needsCustomerUpdate,
-          writer_id: needsWriterUpdate,
-          writer_id_2: needsWriter2Update,
-          writer_fee: needsWriterFeeUpdate,
-          writer_fee_2: needsWriterFee2Update,
-          fee_per_1000: needsFeePer1000Update
+      if (orderPairs.length === 0) {
+        return {
+          code: 1,
+          message: '没有符合条件的订单需要合并'
         }
-      })
+      }
 
-      // 佣金计算逻辑（新版）- 使用新的结算状态判断
-      const [orderDetailRows]: any = await pool.query(
-        `SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
-                co.is_fixed, co.settlement_status
-         FROM orders o
-         LEFT JOIN customer_orders co ON o.order_id = co.order_id
-         WHERE o.order_id = ?`,
-        [order.order_id]
-      );
+      // 批量更新所有需要合并的订单
+      const mergedOrders = []
+      const mergedOrderIds: number[] = [];
+      for (const order of orderPairs) {
+        // 检查需要更新哪些字段
+        const needsCustomerUpdate = !order.existing_customer_id && order.customer_id
+        const needsWriterUpdate = !order.existing_writer_id && order.writer_numeric_id
+        const needsWriter2Update = !order.existing_writer_id_2 && order.writer_numeric_id_2
+        const needsWriterFeeUpdate = !order.existing_writer_fee && order.writer_fee
+        const needsWriterFee2Update = !order.existing_writer_fee_2 && order.writer_fee_2
+        const needsFeePer1000Update = !order.existing_fee_per_1000 && order.fee_per_1000
+        
+        // 构建更新字段
+        const updateFields = []
+        const updateValues = []
+        
+        if (needsCustomerUpdate) {
+          updateFields.push('customer_id = ?')
+          updateValues.push(order.customer_id)
+        }
+        
+        if (needsWriterUpdate) {
+          updateFields.push('writer_id = ?')
+          updateValues.push(order.writer_numeric_id)
+        }
+        
+        if (needsWriter2Update) {
+          updateFields.push('writer_id_2 = ?')
+          updateValues.push(order.writer_numeric_id_2)
+        }
+        
+        if (needsWriterFeeUpdate) {
+          updateFields.push('writer_fee = ?')
+          updateValues.push(order.writer_fee)
+        }
+        
+        if (needsWriterFee2Update) {
+          updateFields.push('writer_fee_2 = ?')
+          updateValues.push(order.writer_fee_2)
+        }
+        
+        if (needsFeePer1000Update) {
+          updateFields.push('fee_per_1000 = ?')
+          updateValues.push(order.fee_per_1000)
+        }
+        
+        // 执行更新
+        if (updateFields.length > 0) {
+          updateValues.push(order.order_id)
+          await connection.query(
+            `UPDATE orders SET ${updateFields.join(', ')} WHERE order_id = ?`,
+            updateValues
+          )
+          mergedOrderIds.push(order.id)
+        }
+        
+        mergedOrders.push({
+          order_id: order.order_id,
+          customer_id: order.customer_id,
+          writer_id: order.writer_biz_id || null,
+          writer_id_2: order.writer_biz_id_2 || null,
+          writer_fee: order.writer_fee,
+          writer_fee_2: order.writer_fee_2,
+          fee_per_1000: order.fee_per_1000,
+          updated_fields: {
+            customer_id: needsCustomerUpdate,
+            writer_id: needsWriterUpdate,
+            writer_id_2: needsWriter2Update,
+            writer_fee: needsWriterFeeUpdate,
+            writer_fee_2: needsWriterFee2Update,
+            fee_per_1000: needsFeePer1000Update
+          }
+        })
+
+        // 佣金计算逻辑（新版）- 使用新的结算状态判断
+        const [orderDetailRows]: any = await connection.query(
+          `SELECT o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
+                  co.is_fixed, co.settlement_status
+           FROM orders o
+           LEFT JOIN customer_orders co ON o.order_id = co.order_id
+           WHERE o.order_id = ?`,
+          [order.order_id]
+        );
       const orderDetail = orderDetailRows[0];
       let commission = null;
       if (orderDetail) {
@@ -1104,40 +1110,47 @@ export const mergeCustomerOrder = async (req: Request, res: Response) => {
         } else {
           commission = 0;
         }
-        // 更新orders表
-        await pool.query(
-          `UPDATE orders SET customer_commission = ? WHERE order_id = ?`,
-          [commission, order.order_id]
-        );
-        // 同步到customer_orders表
-        await pool.query(
-          `UPDATE customer_orders SET customer_commission = ? WHERE order_id = ?`,
-          [commission, order.order_id]
-        );
+          // 更新orders表
+          await connection.query(
+            `UPDATE orders SET customer_commission = ? WHERE order_id = ?`,
+            [commission, order.order_id]
+          );
+          // 同步到customer_orders表
+          await connection.query(
+            `UPDATE customer_orders SET customer_commission = ? WHERE order_id = ?`,
+            [commission, order.order_id]
+          );
       }
     }
 
-    // 合并后，批量更新已同步的客服订单is_merged=1
-    if (mergedOrderIds.length > 0) {
-      await pool.query(
-        `UPDATE customer_orders SET is_merged = 1 WHERE id IN (?)`,
-        [mergedOrderIds]
-      )
-    }
+      // 合并后，批量更新已同步的客服订单is_merged=1
+      if (mergedOrderIds.length > 0) {
+        await connection.query(
+          `UPDATE customer_orders SET is_merged = 1 WHERE id IN (?)`,
+          [mergedOrderIds]
+        )
+      }
 
-    res.json({
-      code: 0,
-      message: '合并成功',
-      data: {
-        total: mergedOrders.length,
-        merged_orders: mergedOrders
+      return {
+        code: 0,
+        message: '合并成功',
+        data: {
+          total: mergedOrders.length,
+          merged_orders: mergedOrders
+        }
       }
     })
+
+    res.json(result)
   } catch (error) {
     console.error('Merge customer order error:', error)
     res.status(500).json({
       code: 1,
-      message: '服务器错误'
+      message: '服务器错误',
+      data: {
+        total: 0,
+        merged_orders: []
+      }
     })
   }
 }
@@ -1173,64 +1186,79 @@ export const lockCustomerOrders = async (req: Request, res: Response) => {
       })
     }
 
-    // 检查订单是否存在且符合锁定条件
-    const [existingOrders]: any = await pool.query(
-      `SELECT id, order_id, is_locked, is_fixed, settlement_status 
-       FROM customer_orders WHERE id IN (?)`,
-      [order_ids]
-    )
+    // 使用事务确保批量锁定的原子性
+    const result = await withTransaction(async (connection) => {
+      // 使用FOR UPDATE锁定订单，防止并发问题
+      const [existingOrders]: any = await connection.query(
+        `SELECT id, order_id, is_locked, is_fixed, settlement_status, writer_id, writer_id_2
+         FROM customer_orders WHERE id IN (${order_ids.map(() => '?').join(',')}) FOR UPDATE`,
+        order_ids
+      )
 
-    if (existingOrders.length !== order_ids.length) {
-      return res.status(400).json({
-        code: 1,
-        message: '部分订单不存在'
-      })
-    }
-
-    // 检查是否有已锁定的订单
-    const lockedOrders = existingOrders.filter((order: any) => order.is_locked)
-    if (lockedOrders.length > 0) {
-      return res.status(400).json({
-        code: 1,
-        message: `以下订单已被锁定，无法重复锁定: ${lockedOrders.map((o: any) => o.order_id).join(', ')}`
-      })
-    }
-
-    // 检查是否有已结算的订单（不应该被锁定）
-    const settledOrders = existingOrders.filter((order: any) => order.settlement_status === 'settled')
-    if (settledOrders.length > 0) {
-      return res.status(400).json({
-        code: 1,
-        message: `以下订单已结算，无需锁定: ${settledOrders.map((o: any) => o.order_id).join(', ')}`
-      })
-    }
-
-    // 检查是否有未定稿的订单（建议不锁定）
-    const unfixedOrders = existingOrders.filter((order: any) => order.is_fixed !== 1)
-    if (unfixedOrders.length > 0) {
-      return res.status(400).json({
-        code: 1,
-        message: `以下订单未定稿，建议先定稿再锁定: ${unfixedOrders.map((o: any) => o.order_id).join(', ')}`
-      })
-    }
-
-    // 批量锁定订单，并根据是否有写手自动设置结算状态
-    for (const orderId of order_ids) {
-      // 查询订单是否有写手
-      const [orderInfo]: any = await pool.query(
-        'SELECT writer_id, writer_id_2 FROM customer_orders WHERE id = ?',
-        [orderId]
-      );
-      
-      if (orderInfo.length > 0) {
-        const hasWriter = orderInfo[0].writer_id || orderInfo[0].writer_id_2;
-        const newSettlementStatus = hasWriter ? 'Locked' : 'SelfLocked';
-        
-        await pool.query(
-          'UPDATE customer_orders SET is_locked = 1, locked_by = ?, locked_at = NOW(), settlement_status = ? WHERE id = ?',
-          [userId, newSettlementStatus, orderId]
-        );
+      if (existingOrders.length !== order_ids.length) {
+        throw new Error('部分订单不存在')
       }
+
+      // 检查是否有已锁定的订单
+      const lockedOrders = existingOrders.filter((order: any) => order.is_locked)
+      if (lockedOrders.length > 0) {
+        throw new Error(`以下订单已被锁定，无法重复锁定: ${lockedOrders.map((o: any) => o.order_id).join(', ')}`)
+      }
+
+      // 检查是否有已结算的订单（不应该被锁定）
+      const settledOrders = existingOrders.filter((order: any) => 
+        ['AllSettled', 'WriterSettled'].includes(order.settlement_status)
+      )
+      if (settledOrders.length > 0) {
+        throw new Error(`以下订单已结算，无需锁定: ${settledOrders.map((o: any) => o.order_id).join(', ')}`)
+      }
+
+      // 检查是否有未定稿的订单（建议不锁定）
+      const unfixedOrders = existingOrders.filter((order: any) => order.is_fixed !== 1)
+      if (unfixedOrders.length > 0) {
+        throw new Error(`以下订单未定稿，建议先定稿再锁定: ${unfixedOrders.map((o: any) => o.order_id).join(', ')}`)
+      }
+
+      // 批量锁定订单，并根据是否有写手自动设置结算状态
+      const lockedOrdersResult = []
+      const selfLockedOrders = [] // 需要异步计算佣金的订单
+      
+      for (const order of existingOrders) {
+        const hasWriter = order.writer_id || order.writer_id_2
+        const newSettlementStatus = hasWriter ? 'Locked' : 'SelfLocked'
+        
+        await connection.query(
+          'UPDATE customer_orders SET is_locked = 1, locked_by = ?, locked_at = NOW(), settlement_status = ? WHERE id = ?',
+          [userId, newSettlementStatus, order.id]
+        )
+        
+        lockedOrdersResult.push({
+          id: order.id,
+          order_id: order.order_id,
+          settlement_status: newSettlementStatus
+        })
+        
+        // 收集需要异步计算佣金的订单
+        if (newSettlementStatus === 'SelfLocked') {
+          selfLockedOrders.push(order.order_id)
+        }
+      }
+      
+      return { lockedOrdersResult, selfLockedOrders }
+    })
+
+    // 事务提交后，异步触发佣金计算
+    if (result.selfLockedOrders.length > 0) {
+      setImmediate(() => {
+        result.selfLockedOrders.forEach(async (orderId: string) => {
+          try {
+            await recalculateCustomerCommissionForOrder(orderId)
+            console.log(`订单 ${orderId} 佣金计算完成`)
+          } catch (error) {
+            console.error(`订单 ${orderId} 佣金计算失败:`, error)
+          }
+        })
+      })
     }
 
     res.json({
@@ -1238,17 +1266,14 @@ export const lockCustomerOrders = async (req: Request, res: Response) => {
       message: '锁定成功',
       data: {
         locked_count: order_ids.length,
-        locked_orders: existingOrders.map((order: any) => ({
-          id: order.id,
-          order_id: order.order_id
-        }))
+        locked_orders: result.lockedOrdersResult
       }
     })
   } catch (error) {
     console.error('Lock customer orders error:', error)
     res.status(500).json({
       code: 1,
-      message: '服务器错误'
+      message: error.message || '服务器错误'
     })
   }
 }
@@ -1284,74 +1309,76 @@ export const unlockCustomerOrders = async (req: Request, res: Response) => {
       })
     }
 
-    // 检查订单是否存在且已被锁定
-    const [existingOrders]: any = await pool.query(
-      `SELECT id, order_id, is_locked, settlement_status 
-       FROM customer_orders WHERE id IN (?)`,
-      [order_ids]
-    )
-
-    if (existingOrders.length !== order_ids.length) {
-      return res.status(400).json({
-        code: 1,
-        message: '部分订单不存在'
-      })
-    }
-
-    // 检查是否有未锁定的订单
-    const unlockedOrders = existingOrders.filter((order: any) => !order.is_locked)
-    if (unlockedOrders.length > 0) {
-      return res.status(400).json({
-        code: 1,
-        message: `以下订单未被锁定，无法解锁: ${unlockedOrders.map((o: any) => o.order_id).join(', ')}`
-      })
-    }
-
-    // 智能解锁订单，根据条件判断状态
-    const ordersToUnlock = existingOrders.filter((order: any) => 
-      order.settlement_status === 'Pending' ||
-      order.settlement_status === 'Eligible' ||
-      order.settlement_status === 'Locked' || 
-      order.settlement_status === 'SelfLocked'
-    )
-    const ordersToKeepLocked = existingOrders.filter((order: any) => 
-      order.settlement_status === 'AllSettled' || 
-      order.settlement_status === 'WriterSettled'
-    )
-    
-    if (ordersToUnlock.length > 0) {
-      // 统一回退为 Pending
-      await pool.query(
-        'UPDATE customer_orders SET is_locked = 0, locked_by = NULL, locked_at = NULL, settlement_status = ?, customer_commission = 0 WHERE id IN (?)',
-        ['Pending', ordersToUnlock.map((o: any) => o.id)]
+    // 使用事务确保批量解锁的原子性
+    const result = await withTransaction(async (connection) => {
+      // 使用FOR UPDATE锁定订单，防止并发问题
+      const [existingOrders]: any = await connection.query(
+        `SELECT id, order_id, is_locked, settlement_status 
+         FROM customer_orders WHERE id IN (${order_ids.map(() => '?').join(',')}) FOR UPDATE`,
+        order_ids
       )
-      // 同步 orders 表的佣金为0
-      await pool.query(
-        'UPDATE orders SET customer_commission = 0 WHERE order_id IN (?)',
-        [ordersToUnlock.map((o: any) => o.order_id)]
+
+      if (existingOrders.length !== order_ids.length) {
+        throw new Error('部分订单不存在')
+      }
+
+      // 检查是否有未锁定的订单
+      const unlockedOrders = existingOrders.filter((order: any) => !order.is_locked)
+      if (unlockedOrders.length > 0) {
+        throw new Error(`以下订单未被锁定，无法解锁: ${unlockedOrders.map((o: any) => o.order_id).join(', ')}`)
+      }
+
+      // 智能解锁订单，根据条件判断状态
+      const ordersToUnlock = existingOrders.filter((order: any) => 
+        order.settlement_status === 'Pending' ||
+        order.settlement_status === 'Eligible' ||
+        order.settlement_status === 'Locked' || 
+        order.settlement_status === 'SelfLocked'
       )
-    }
+      const ordersToKeepLocked = existingOrders.filter((order: any) => 
+        order.settlement_status === 'AllSettled' || 
+        order.settlement_status === 'WriterSettled'
+      )
+      
+      if (ordersToUnlock.length > 0) {
+        // 统一回退为 Pending
+        await connection.query(
+          `UPDATE customer_orders SET is_locked = 0, locked_by = NULL, locked_at = NULL, settlement_status = ?, customer_commission = 0 
+           WHERE id IN (${ordersToUnlock.map(() => '?').join(',')})`,
+          ['Pending', ...ordersToUnlock.map((o: any) => o.id)]
+        )
+        // 同步 orders 表的佣金为0
+        await connection.query(
+          `UPDATE orders SET customer_commission = 0 WHERE order_id IN (${ordersToUnlock.map(() => '?').join(',')})`,
+          ordersToUnlock.map((o: any) => o.order_id)
+        )
+      }
+
+      return {
+        unlockedCount: ordersToUnlock.length,
+        keptLockedCount: ordersToKeepLocked.length,
+        ordersToUnlock,
+        ordersToKeepLocked
+      }
+    })
 
     // 返回解锁结果
-    const unlockedCount = ordersToUnlock.length
-    const keptLockedCount = ordersToKeepLocked.length
-    
     let message = '解锁成功'
-    if (keptLockedCount > 0) {
-      message = `解锁成功，${unlockedCount}个订单已解锁，${keptLockedCount}个已结算订单保持锁定状态`
+    if (result.keptLockedCount > 0) {
+      message = `解锁成功，${result.unlockedCount}个订单已解锁，${result.keptLockedCount}个已结算订单保持锁定状态`
     }
 
     res.json({
       code: 0,
       message: message,
       data: {
-        unlocked_count: unlockedCount,
-        kept_locked_count: keptLockedCount,
-        unlocked_orders: ordersToUnlock.map((order: any) => ({
+        unlocked_count: result.unlockedCount,
+        kept_locked_count: result.keptLockedCount,
+        unlocked_orders: result.ordersToUnlock.map((order: any) => ({
           id: order.id,
           order_id: order.order_id
         })),
-        kept_locked_orders: ordersToKeepLocked.map((order: any) => ({
+        kept_locked_orders: result.ordersToKeepLocked.map((order: any) => ({
           id: order.id,
           order_id: order.order_id
         }))
@@ -1361,7 +1388,7 @@ export const unlockCustomerOrders = async (req: Request, res: Response) => {
     console.error('Unlock customer orders error:', error)
     res.status(500).json({
       code: 1,
-      message: '服务器错误'
+      message: error.message || '服务器错误'
     })
   }
 }
@@ -1371,38 +1398,40 @@ export const autoMergeCustomerOrder = async () => {
   try {
     console.log('开始自动同步客服订单到订单总表...')
     
-    // 查找所有符合条件的订单进行合并
-    // 条件：客服订单表中有记录，且订单总表中也有相同订单号的记录
-    // 且订单总表中客服ID或写手ID至少有一个为空，或者第二个写手需要更新，或者佣金需要更新
-    const [orderPairs]: any = await pool.query(
-      `SELECT co.order_id, co.customer_id, co.writer_id, co.writer_id_2, 
-              co.fee as writer_fee, co.fee_2 as writer_fee_2,
-              co.fee_per_1000,
-              w.id as writer_numeric_id, w2.id as writer_numeric_id_2,
-              w.writer_id as writer_biz_id, w2.writer_id as writer_biz_id_2,
-              o.customer_id as existing_customer_id, o.writer_id as existing_writer_id, o.writer_id_2 as existing_writer_id_2,
-              o.writer_fee as existing_writer_fee, o.writer_fee_2 as existing_writer_fee_2,
-              o.fee_per_1000 as existing_fee_per_1000
-       FROM customer_orders co
-       INNER JOIN orders o ON co.order_id = o.order_id
-       LEFT JOIN writer_info w ON co.writer_id = w.writer_id
-       LEFT JOIN writer_info w2 ON co.writer_id_2 = w2.writer_id
-       WHERE (o.customer_id IS NULL OR o.writer_id IS NULL OR 
-              (co.writer_id_2 IS NOT NULL AND o.writer_id_2 IS NULL) OR
-              (co.fee IS NOT NULL AND o.writer_fee IS NULL) OR
-              (co.fee_2 IS NOT NULL AND o.writer_fee_2 IS NULL) OR
-              (co.fee_per_1000 IS NOT NULL AND o.fee_per_1000 IS NULL))`
-    )
+    // 使用事务确保复杂合并操作的原子性
+    const result = await withTransaction(async (connection) => {
+      // 查找所有符合条件的订单进行合并
+      // 条件：客服订单表中有记录，且订单总表中也有相同订单号的记录
+      // 且订单总表中客服ID或写手ID至少有一个为空，或者第二个写手需要更新，或者佣金需要更新
+      const [orderPairs]: any = await connection.query(
+        `SELECT co.order_id, co.customer_id, co.writer_id, co.writer_id_2, 
+                co.fee as writer_fee, co.fee_2 as writer_fee_2,
+                co.fee_per_1000,
+                w.id as writer_numeric_id, w2.id as writer_numeric_id_2,
+                w.writer_id as writer_biz_id, w2.writer_id as writer_biz_id_2,
+                o.customer_id as existing_customer_id, o.writer_id as existing_writer_id, o.writer_id_2 as existing_writer_id_2,
+                o.writer_fee as existing_writer_fee, o.writer_fee_2 as existing_writer_fee_2,
+                o.fee_per_1000 as existing_fee_per_1000
+         FROM customer_orders co
+         INNER JOIN orders o ON co.order_id = o.order_id
+         LEFT JOIN writer_info w ON co.writer_id = w.writer_id
+         LEFT JOIN writer_info w2 ON co.writer_id_2 = w2.writer_id
+         WHERE (o.customer_id IS NULL OR o.writer_id IS NULL OR 
+                (co.writer_id_2 IS NOT NULL AND o.writer_id_2 IS NULL) OR
+                (co.fee IS NOT NULL AND o.writer_fee IS NULL) OR
+                (co.fee_2 IS NOT NULL AND o.writer_fee_2 IS NULL) OR
+                (co.fee_per_1000 IS NOT NULL AND o.fee_per_1000 IS NULL))`
+      )
 
-    if (orderPairs.length === 0) {
-      console.log('没有符合条件的订单需要同步')
-      return {
-        success: true,
-        message: '没有符合条件的订单需要同步',
-        total: 0,
-        merged_orders: []
+      if (orderPairs.length === 0) {
+        console.log('没有符合条件的订单需要同步')
+        return {
+          success: true,
+          message: '没有符合条件的订单需要同步',
+          total: 0,
+          merged_orders: []
+        }
       }
-    }
 
     // 批量更新所有需要合并的订单
     const mergedOrders = []
@@ -1550,26 +1579,31 @@ export const autoMergeCustomerOrder = async () => {
       }
     }
 
-    // 合并后，批量更新已同步的客服订单is_merged=1
-    if (mergedOrderIds.length > 0) {
-      await pool.query(
-        `UPDATE customer_orders SET is_merged = 1 WHERE id IN (?)`,
-        [mergedOrderIds]
-      )
-    }
+      // 合并后，批量更新已同步的客服订单is_merged=1
+      if (mergedOrderIds.length > 0) {
+        await connection.query(
+          `UPDATE customer_orders SET is_merged = 1 WHERE id IN (?)`,
+          [mergedOrderIds]
+        )
+      }
 
-    console.log(`自动同步完成，共处理 ${mergedOrders.length} 个订单`)
-    return {
-      success: true,
-      message: '自动同步成功',
-      total: mergedOrders.length,
-      merged_orders: mergedOrders
-    }
+      console.log(`自动同步完成，共处理 ${mergedOrders.length} 个订单`)
+      return {
+        success: true,
+        message: '自动同步成功',
+        total: mergedOrders.length,
+        merged_orders: mergedOrders
+      }
+    });
+
+    return result;
   } catch (error) {
     console.error('自动同步客服订单错误:', error)
     return {
       success: false,
       message: '自动同步失败',
+      total: 0,
+      merged_orders: [],
       error: error.message
     }
   }
@@ -1891,14 +1925,12 @@ export const checkEligibleForSettlement = async (orderId: string) => {
     // 条件一：已定稿
     const isFixed = orderDetail.is_fixed === 1;
     
-    // 条件二：平台订单金额与客服录入金额一致
+    // 条件二：平台订单金额与客服录入金额一致（都不扣退款）
     const platformAmount = Number(orderDetail.amount || 0);
-    const refundAmount = Number(orderDetail.refund_amount || 0);
-    const netPlatformAmount = platformAmount - refundAmount;
     const customerAmount = Number(orderDetail.order_amount || 0);
     
-    // 金额匹配（允许0.01的误差）
-    const amountMatch = Math.abs(netPlatformAmount - customerAmount) <= 0.01;
+    // 金额匹配（允许0.01的误差）- 直接比较订单金额，不扣除退款
+    const amountMatch = Math.abs(platformAmount - customerAmount) <= 0.01;
     
     // 同时满足两个条件
     if (isFixed && amountMatch && orderDetail.settlement_status === 'Pending') {
@@ -2030,96 +2062,96 @@ export const updateSettlementStatus = async (req: Request, res: Response) => {
       return validTransitions[fromStatus]?.includes(toStatus) || false;
     };
 
-    // 查询所有订单的当前状态
-    const placeholders = orderIdArray.map(() => '?').join(',');
-    const [orderInfoList]: any = await pool.query(
-      `SELECT id, order_id, settlement_status, writer_id, writer_id_2 
-       FROM customer_orders 
-       WHERE order_id IN (${placeholders})`,
-      orderIdArray
-    );
+    // 使用事务确保批量状态更新的原子性
+    const result = await withTransaction(async (connection) => {
+      // 使用FOR UPDATE锁定订单，防止并发问题
+      const placeholders = orderIdArray.map(() => '?').join(',');
+      const [orderInfoList]: any = await connection.query(
+        `SELECT id, order_id, settlement_status, writer_id, writer_id_2 
+         FROM customer_orders 
+         WHERE order_id IN (${placeholders}) FOR UPDATE`,
+        orderIdArray
+      );
 
-    if (orderInfoList.length === 0) {
-      return res.status(404).json({ 
-        code: 1, 
-        message: '未找到任何有效订单' 
-      });
-    }
+      if (orderInfoList.length === 0) {
+        throw new Error('未找到任何有效订单');
+      }
 
-    // 检查是否所有订单都存在
-    const foundOrderIds = orderInfoList.map((order: any) => order.order_id);
-    const notFoundOrderIds = orderIdArray.filter(id => !foundOrderIds.includes(id));
-    
-    if (notFoundOrderIds.length > 0) {
-      return res.status(404).json({ 
-        code: 1, 
-        message: `以下订单不存在: ${notFoundOrderIds.join(', ')}` 
-      });
-    }
+      // 检查是否所有订单都存在
+      const foundOrderIds = orderInfoList.map((order: any) => order.order_id);
+      const notFoundOrderIds = orderIdArray.filter(id => !foundOrderIds.includes(id));
+      
+      if (notFoundOrderIds.length > 0) {
+        throw new Error(`以下订单不存在: ${notFoundOrderIds.join(', ')}`);
+      }
 
-                    // 验证每个订单的状态流转是否有效 - 全有或全无策略
-                const invalidTransitions: string[] = [];
+      // 验证每个订单的状态流转是否有效 - 全有或全无策略
+      const invalidTransitions: string[] = [];
 
-                for (const order of orderInfoList) {
-                  if (!isValidTransition(order.settlement_status, new_status)) {
-                    invalidTransitions.push(`${order.order_id}(${order.settlement_status})`);
-                  }
-                }
+      for (const order of orderInfoList) {
+        if (!isValidTransition(order.settlement_status, new_status)) {
+          invalidTransitions.push(`${order.order_id}(${order.settlement_status})`);
+        }
+      }
 
-                // 如果有任何一个订单不符合条件，全部不修改
-                if (invalidTransitions.length > 0) {
-                  return res.status(400).json({
-                    code: 1,
-                    message: `批量修改失败：以下订单不允许修改为 ${new_status} 状态，所有订单均不修改: ${invalidTransitions.join(', ')}`
-                  });
-                }
+      // 如果有任何一个订单不符合条件，全部不修改
+      if (invalidTransitions.length > 0) {
+        throw new Error(`批量修改失败：以下订单不允许修改为 ${new_status} 状态，所有订单均不修改: ${invalidTransitions.join(', ')}`);
+      }
 
-                // 所有订单都符合条件，进行批量更新
-                const allOrderIds = orderInfoList.map(order => order.order_id);
-                const updatePlaceholders = allOrderIds.map(() => '?').join(',');
-    
-    let updateQuery = 'UPDATE customer_orders SET settlement_status = ?, updated_at = NOW()';
-    let updateParams = [new_status];
+      // 所有订单都符合条件，进行批量更新
+      const allOrderIds = orderInfoList.map(order => order.order_id);
+      const updatePlaceholders = allOrderIds.map(() => '?').join(',');
+      
+      let updateQuery = 'UPDATE customer_orders SET settlement_status = ?, updated_at = NOW()';
+      let updateParams = [new_status];
 
-    // 根据新状态更新相应的导出标识
-    if (new_status === 'WriterSettled') {
-      updateQuery += ', writer_settlement_exported = 1, settlement_updated_by = ?, settlement_updated_at = NOW()';
-      updateParams.push(userId);
-    } else if (new_status === 'AllSettled') {
-      updateQuery += ', customer_settlement_exported = 1, settlement_updated_by = ?, settlement_updated_at = NOW()';
-      updateParams.push(userId);
-    } else {
-      // 其他状态只更新结算状态更新人信息
-      updateQuery += ', settlement_updated_by = ?, settlement_updated_at = NOW()';
-      updateParams.push(userId);
-    }
+      // 根据新状态更新相应的导出标识
+      if (new_status === 'WriterSettled') {
+        updateQuery += ', writer_settlement_exported = 1, settlement_updated_by = ?, settlement_updated_at = NOW()';
+        updateParams.push(userId);
+      } else if (new_status === 'AllSettled') {
+        updateQuery += ', customer_settlement_exported = 1, settlement_updated_by = ?, settlement_updated_at = NOW()';
+        updateParams.push(userId);
+      } else {
+        // 其他状态只更新结算状态更新人信息
+        updateQuery += ', settlement_updated_by = ?, settlement_updated_at = NOW()';
+        updateParams.push(userId);
+      }
 
-                    updateQuery += ` WHERE order_id IN (${updatePlaceholders})`;
-                updateParams.push(...allOrderIds);
+      updateQuery += ` WHERE order_id IN (${updatePlaceholders})`;
+      updateParams.push(...allOrderIds);
 
-                await pool.query(updateQuery, updateParams);
+      await connection.query(updateQuery, updateParams);
 
-                // 记录操作日志
-                console.log(`用户 ${userId} 批量修改订单结算状态: ${allOrderIds.join(', ')} 从原状态修改为 ${new_status}`);
+      return {
+        orderInfoList,
+        allOrderIds,
+        orderIdArray
+      };
+    });
 
-                res.json({
-                  code: 0,
-                  message: '批量结算状态修改成功',
-                  data: {
-                    total_orders: orderIdArray.length,
-                    success_orders: orderInfoList.length,
-                    failed_orders: 0,
-                    order_ids: allOrderIds,
-                    new_status,
-                    updated_at: new Date().toISOString()
-                  }
-                });
+    // 记录操作日志
+    console.log(`用户 ${userId} 批量修改订单结算状态: ${result.allOrderIds.join(', ')} 从原状态修改为 ${new_status}`);
+
+    res.json({
+      code: 0,
+      message: '批量结算状态修改成功',
+      data: {
+        total_orders: result.orderIdArray.length,
+        success_orders: result.orderInfoList.length,
+        failed_orders: 0,
+        order_ids: result.allOrderIds,
+        new_status,
+        updated_at: new Date().toISOString()
+      }
+    });
 
   } catch (error) {
     console.error('Update settlement status error:', error);
     res.status(500).json({
       code: 1,
-      message: '服务器错误'
+      message: error.message || '服务器错误'
     });
   }
 };
@@ -2210,14 +2242,12 @@ export const batchFixHistoricalSettlement = async (req: Request, res: Response) 
 
     // 逐个检查订单是否满足条件
     for (const order of orders) {
-      // 计算金额匹配
+      // 计算金额匹配（使用原始金额，与其他核心业务逻辑保持一致）
       const platformAmount = Number(order.amount || 0);
-      const refundAmount = Number(order.refund_amount || 0);
-      const netPlatformAmount = platformAmount - refundAmount;
       const customerAmount = Number(order.order_amount || 0);
       
       // 金额匹配（允许0.01的误差）
-      const amountMatch = Math.abs(netPlatformAmount - customerAmount) <= 0.01;
+      const amountMatch = Math.abs(platformAmount - customerAmount) <= 0.01;
       
       if (amountMatch) {
         eligibleUpdates.push(order.id);
@@ -2228,21 +2258,24 @@ export const batchFixHistoricalSettlement = async (req: Request, res: Response) 
       }
     }
 
-    // 批量更新为Eligible
-    if (eligibleUpdates.length > 0) {
-      await pool.query(
-        'UPDATE customer_orders SET settlement_status = ?, settlement_updated_by = ?, settlement_updated_at = NOW() WHERE id IN (?)',
-        ['Eligible', userId, eligibleUpdates]
-      );
-    }
+    // 使用事务确保批量更新的原子性
+    await withTransaction(async (connection) => {
+      // 批量更新为Eligible
+      if (eligibleUpdates.length > 0) {
+        await connection.query(
+          'UPDATE customer_orders SET settlement_status = ?, settlement_updated_by = ?, settlement_updated_at = NOW() WHERE id IN (?)',
+          ['Eligible', userId, eligibleUpdates]
+        );
+      }
 
-    // 批量更新为Pending（保持原状态，但确保数据一致性）
-    if (pendingUpdates.length > 0) {
-      await pool.query(
-        'UPDATE customer_orders SET settlement_status = ?, settlement_updated_by = ?, settlement_updated_at = NOW() WHERE id IN (?)',
-        ['Pending', userId, pendingUpdates]
-      );
-    }
+      // 批量更新为Pending（保持原状态，但确保数据一致性）
+      if (pendingUpdates.length > 0) {
+        await connection.query(
+          'UPDATE customer_orders SET settlement_status = ?, settlement_updated_by = ?, settlement_updated_at = NOW() WHERE id IN (?)',
+          ['Pending', userId, pendingUpdates]
+        );
+      }
+    });
 
     // 记录操作日志
     console.log(`用户 ${userId} 批量处理历史订单结算状态: ${start_date} 至 ${end_date}, 处理 ${orders.length} 条订单, 变更为可结算 ${eligibleCount} 条`);

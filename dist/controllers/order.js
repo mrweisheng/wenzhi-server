@@ -217,9 +217,9 @@ const recalculateCommission = async (req, res) => {
             !(currentUser[0].role_name.includes('超级管理员') || currentUser[0].role_name.includes('财务'))) {
             return res.status(403).json({ code: 1, message: '您没有权限执行此操作，仅限超级管理员和财务角色' });
         }
-        // 只查近30天且customer_id不为空的订单，同时查询定稿状态
+        // 只查近30天且customer_id不为空的订单，同时查询定稿状态和结算状态
         const [orders] = await db_1.default.query(`SELECT o.order_id, o.amount, o.refund_amount, o.fee, o.channel, o.status, o.customer_id, o.writer_id, o.writer_id_2, o.writer_fee, o.writer_fee_2, o.fee_per_1000,
-              co.is_fixed
+              co.is_fixed, co.settlement_status
        FROM orders o
        LEFT JOIN customer_orders co ON o.order_id = co.order_id
        WHERE o.customer_id IS NOT NULL AND o.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`);
@@ -236,8 +236,6 @@ const recalculateCommission = async (req, res) => {
                 const order = orders[i];
                 const amount = Number(order.amount || 0);
                 const refund = Number(order.refund_amount || 0);
-                const channel = order.channel || '';
-                const status = order.status || '';
                 const customerId = order.customer_id;
                 const writerId = order.writer_id;
                 const writerId2 = order.writer_id_2;
@@ -246,15 +244,11 @@ const recalculateCommission = async (req, res) => {
                 const feePer1000 = Number(order.fee_per_1000 || 0);
                 const isFixed = order.is_fixed === 1; // 是否定稿
                 const netIncome = amount - refund;
+                const settlementStatus = order.settlement_status || 'Pending';
                 let eligible = false;
-                if (customerId && netIncome > 0 && isFixed) { // 添加定稿状态判断
-                    if (channel.includes('企业微信')) {
-                        eligible = true;
-                    }
-                    else if (channel.includes('支付宝') || channel.includes('淘宝') || channel.includes('天猫')) {
-                        if (status.includes('成功'))
-                            eligible = true;
-                    }
+                // 只对 SelfLocked/WriterSettled 状态订单计算佣金
+                if (customerId && netIncome > 0 && isFixed && (settlementStatus === 'SelfLocked' || settlementStatus === 'WriterSettled')) {
+                    eligible = true;
                 }
                 let commission = null;
                 if (eligible) {

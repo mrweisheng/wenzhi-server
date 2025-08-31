@@ -16,7 +16,7 @@ import { errorHandler } from './middlewares/error'
 import { testConnection, query } from './config/db'
 import { log } from './config/logger'
 import morgan from 'morgan'
-import { scheduleCustomerOrderSync, initialCustomerOrderSync, scheduleSettlementStatusSync } from './scheduler'
+import { scheduleCustomerOrderSync, initialCustomerOrderSync, scheduleSettlementStatusSync, scheduleMissedOrderCheck, scheduleCommissionFix } from './scheduler'
 
 const app = express()
 
@@ -109,6 +109,12 @@ const startServer = async () => {
       // 启动结算状态自动修正定时任务
       scheduleSettlementStatusSync()
       
+      // 启动遗漏订单检查定时任务
+      scheduleMissedOrderCheck()
+      
+      // 启动佣金修复定时任务
+      scheduleCommissionFix()
+      
       // 执行初始同步
       initialCustomerOrderSync()
     })
@@ -119,4 +125,4 @@ const startServer = async () => {
   }
 }
 
-startServer() 
+startServer()
