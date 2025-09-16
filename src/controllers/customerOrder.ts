@@ -573,27 +573,39 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
       })
     }
 
-    // 基础权限控制：只有录入客服可以修改订单
-    if (orderInfo[0].customer_id !== userId) {
+    // 检查当前用户角色
+    const [currentUser]: any = await pool.query(
+      `SELECT r.role_name
+       FROM users u
+       INNER JOIN roles r ON u.role_id = r.id
+       WHERE u.id = ?`,
+      [userId]
+    )
+
+    if (currentUser.length === 0) {
       return res.status(403).json({
         code: 1,
-        message: '只有录入客服可以修改订单'
+        message: '用户角色不存在'
       })
     }
 
-    // 如果订单被锁定，检查用户权限
-    if (orderInfo[0].is_locked) {
-      const [currentUser]: any = await pool.query(
-        `SELECT r.role_name 
-         FROM users u 
-         INNER JOIN roles r ON u.role_id = r.id 
-         WHERE u.id = ?`,
-        [userId]
-      )
+    const isAdminOrFinance = currentUser[0].role_name.includes('超级管理员') ||
+                           currentUser[0].role_name.includes('财务')
 
-      if (currentUser.length === 0 || 
-          !(currentUser[0].role_name.includes('超级管理员') || 
-            currentUser[0].role_name.includes('财务'))) {
+    // 权限控制逻辑：
+    // 1. 超级管理员和财务：可以修改所有订单
+    // 2. 普通客服：只能修改自己录入的未锁定订单
+    if (!isAdminOrFinance) {
+      // 检查是否为订单录入客服
+      if (orderInfo[0].customer_id !== userId) {
+        return res.status(403).json({
+          code: 1,
+          message: '只有录入客服可以修改订单'
+        })
+      }
+
+      // 检查订单是否被锁定（普通客服不能修改已锁定订单）
+      if (orderInfo[0].is_locked) {
         return res.status(403).json({
           code: 1,
           message: '订单已被锁定，仅限超级管理员和财务角色可以修改'
@@ -627,27 +639,17 @@ export const updateCustomerOrder = async (req: Request, res: Response) => {
     // 稿费金额权限控制：修改定稿状态时的权限检查
     if (updateData.hasOwnProperty('is_fixed') && updateData.is_fixed !== orderInfo[0].is_fixed) {
       const totalFee = Number(orderInfo[0].fee || 0) + Number(orderInfo[0].fee_2 || 0)
-      
+
       if (totalFee >= 100) {
         // 稿费 >= 100，只有管理/财务可以修改定稿状态
-        const [currentUser]: any = await pool.query(
-          `SELECT r.role_name 
-           FROM users u 
-           INNER JOIN roles r ON u.role_id = r.id 
-           WHERE u.id = ?`,
-          [userId]
-        )
-
-        if (currentUser.length === 0 || 
-            !(currentUser[0].role_name.includes('超级管理员') || 
-              currentUser[0].role_name.includes('财务'))) {
+        if (!isAdminOrFinance) {
           return res.status(403).json({
             code: 1,
             message: '稿费大于等于100的订单，只有管理/财务可以修改定稿状态'
           })
         }
       }
-      // 稿费 < 100，客服可以修改定稿状态
+      // 稿费 < 100，客服可以修改定稿状态（在之前的权限检查中已确保）
     }
 
     // 检查派单编号唯一性（如果有填写）

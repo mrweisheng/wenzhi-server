@@ -68,7 +68,7 @@ export const login = async (req: Request, res: Response) => {
       data: {
         token: accessToken,
         refreshToken,
-        expires: new Date(Date.now() + 2 * 60 * 60 * 1000).getTime(), // 2小时后的时间戳
+        expires: new Date(Date.now() + 24 * 60 * 60 * 1000).getTime(), // 24小时后的时间戳
         userInfo: {
           ...userInfo[0],
           role: roles[0],
@@ -147,4 +147,4 @@ export const getUserInfo = async (req: Request, res: Response) => {
       message: '服务器错误'
     })
   }
-} 
+}
