@@ -522,7 +522,7 @@ export const exportWriters = async (req: Request, res: Response) => {
 
     sql += ' ORDER BY w.created_time DESC';
 
-    const [rows] = await pool.query(sql, params);
+    const [rows] = await pool.query(sql, params) as any[];
 
     // 格式化数据用于导出
     const exportData = rows.map((writer: any) => ({
