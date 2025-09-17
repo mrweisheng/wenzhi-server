@@ -44,7 +44,7 @@ const login = async (req, res) => {
             data: {
                 token: accessToken,
                 refreshToken,
-                expires: new Date(Date.now() + 2 * 60 * 60 * 1000).getTime(), // 2小时后的时间戳
+                expires: new Date(Date.now() + 24 * 60 * 60 * 1000).getTime(), // 24小时后的时间戳
                 userInfo: {
                     ...userInfo[0],
                     role: roles[0],

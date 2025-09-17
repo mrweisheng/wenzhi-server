@@ -470,7 +470,7 @@ export const exportWriters = async (req: Request, res: Response) => {
     // 权限检查：只有超管、财务、客服可以导出
     const userId = (req as any).userId;
     const [userRows]: any = await pool.query(
-      'SELECT role FROM users WHERE id = ?',
+      'SELECT r.role_name FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?',
       [userId]
     );
 
@@ -481,8 +481,8 @@ export const exportWriters = async (req: Request, res: Response) => {
       });
     }
 
-    const userRole = userRows[0].role;
-    const allowedRoles = ['superadmin', 'finance', 'customer_service'];
+    const userRole = userRows[0].role_name;
+    const allowedRoles = ['超级管理员', '财务', '客服'];
 
     if (!allowedRoles.includes(userRole)) {
       return res.status(403).json({

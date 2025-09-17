@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getWriterQuickSearch = exports.openCreateWriter = exports.getWriterList = exports.batchDeleteWriters = exports.deleteWriter = exports.updateWriter = exports.createWriter = exports.getWriterById = exports.getWriters = void 0;
+exports.exportWriters = exports.getWriterQuickSearch = exports.openCreateWriter = exports.getWriterList = exports.batchDeleteWriters = exports.deleteWriter = exports.updateWriter = exports.createWriter = exports.getWriterById = exports.getWriters = void 0;
 const db_1 = __importDefault(require("../config/db"));
 // 获取写手列表
 const getWriters = async (req, res) => {
@@ -394,3 +394,80 @@ const getWriterQuickSearch = async (req, res) => {
     }
 };
 exports.getWriterQuickSearch = getWriterQuickSearch;
+// 导出写手数据
+const exportWriters = async (req, res) => {
+    try {
+        // 权限检查：只有超管、财务、客服可以导出
+        const userId = req.userId;
+        const [userRows] = await db_1.default.query('SELECT r.role_name FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = ?', [userId]);
+        if (userRows.length === 0) {
+            return res.status(401).json({
+                code: 1,
+                message: '用户不存在'
+            });
+        }
+        const userRole = userRows[0].role_name;
+        const allowedRoles = ['超级管理员', '财务', '客服'];
+        if (!allowedRoles.includes(userRole)) {
+            return res.status(403).json({
+                code: 1,
+                message: '权限不足，只有超管、财务、客服可以导出写手数据'
+            });
+        }
+        const { educations = [], writing_experiences = [] } = req.body;
+        // 构建查询条件
+        let sql = `
+      SELECT w.*,
+             CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END as is_activated
+      FROM writer_info w
+      LEFT JOIN users u ON w.writer_id = u.username
+      WHERE 1=1
+    `;
+        const params = [];
+        // 处理多选学历条件
+        if (educations && educations.length > 0) {
+            const placeholders = educations.map(() => '?').join(',');
+            sql += ` AND w.education IN (${placeholders})`;
+            params.push(...educations);
+        }
+        // 处理多选写作经验条件
+        if (writing_experiences && writing_experiences.length > 0) {
+            const placeholders = writing_experiences.map(() => '?').join(',');
+            sql += ` AND w.writing_experience IN (${placeholders})`;
+            params.push(...writing_experiences);
+        }
+        sql += ' ORDER BY w.created_time DESC';
+        const [rows] = await db_1.default.query(sql, params);
+        // 格式化数据用于导出
+        const exportData = rows.map((writer) => ({
+            '写手ID': writer.writer_id,
+            '姓名': writer.name,
+            '手机号1': writer.phone_1,
+            '手机号2': writer.phone_2,
+            '学历': writer.education,
+            '专业': writer.major,
+            '写作经验': writer.writing_experience,
+            '申请日期': writer.apply_date,
+            '是否已激活': writer.is_activated ? '是' : '否',
+            '是否标星': writer.starred ? '是' : '否',
+            '是否已处理': writer.processed ? '是' : '否',
+            '创建时间': writer.created_time,
+            '创建人': writer.created_by,
+            '最后修改时间': writer.last_modified_time,
+            '最后修改人': writer.last_modified_by
+        }));
+        res.json({
+            code: 0,
+            data: exportData,
+            message: '获取成功'
+        });
+    }
+    catch (error) {
+        console.error('Export writers error:', error);
+        res.status(500).json({
+            code: 1,
+            message: '服务器错误'
+        });
+    }
+};
+exports.exportWriters = exportWriters;

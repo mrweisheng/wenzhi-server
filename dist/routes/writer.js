@@ -33,4 +33,6 @@ router.get('/:writerId/today-rating', auth_1.auth, writerRating_1.getWriterToday
 router.get('/:writerId/rating-by-date', auth_1.auth, writerRating_1.getWriterRatingByDate);
 // 新增：开放注册写手（无token限制，带IP限流）
 router.post('/open', rateLimit_1.writerOpenLimiter, writer_1.openCreateWriter);
+// 导出写手数据
+router.post('/export', auth_1.auth, writer_1.exportWriters);
 exports.default = router;
